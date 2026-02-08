@@ -31,15 +31,16 @@ class AdvancedEDA:
         clean = self.flat_data[np.abs(self.flat_data) < 200]
         skewness = skew(clean)
 
-        plt.figure()
+        plt.figure(num="Amplitude Distribution")  # Name the figure for PyCharm
         sns.histplot(clean, bins=100, color='#6c5ce7', kde=True, stat="density")
         plt.title(f"1. Amplitude Distribution (Skew: {skewness:.2f})")
         plt.xlabel("Voltage (µV)")
         plt.xlim(-100, 100)
+        plt.tight_layout()
         plt.show()
 
         self._print_inference("Signal Normality",
-                              f"Skewness is {skewness:.2f}. Values near 0 imply normal brain activity. High skew (>1) implies artifacts or seizure spikes.")
+                              f"Skewness is {skewness:.2f}. Values near 0 imply normal brain activity.")
 
     # --- PLOT 2: CHANNEL VARIANCE RANKING ---
     def plot_2_channel_variance(self):
@@ -47,22 +48,23 @@ class AdvancedEDA:
         df = df.sort_values('Variance', ascending=False)
         max_ch = df.iloc[0]
 
-        plt.figure()
+        plt.figure(num="Channel Variance")
         sns.barplot(data=df, x='Channel', y='Variance', palette='viridis', hue='Channel', legend=False)
         plt.title("2. Channel Variance Ranking")
         plt.xticks(rotation=45)
         plt.ylabel("Variance (µV²)")
+        plt.tight_layout()
         plt.show()
 
         self._print_inference("Focal Point",
-                              f"Highest activity found in {max_ch['Channel']} ({max_ch['Variance']:.1f} µV²). This is the likely seizure focus or artifact source.")
+                              f"Highest activity found in {max_ch['Channel']}. Likely seizure focus or artifact.")
 
-    # --- PLOT 3: ARTIFACT SCATTER (SKEW vs KURTOSIS) ---
+    # --- PLOT 3: ARTIFACT SCATTER ---
     def plot_3_artifact_scatter(self):
         skews = skew(self.data, axis=1)
         kurts = kurtosis(self.data, axis=1)
 
-        plt.figure()
+        plt.figure(num="Artifact Detection")
         sns.scatterplot(x=skews, y=kurts, s=100, hue=self.ch_names, palette='deep')
         plt.axhline(3, color='r', linestyle='--', label='Gaussian Normal')
         plt.title("3. Artifact Detection (Skew vs Kurtosis)")
@@ -74,10 +76,9 @@ class AdvancedEDA:
     def plot_4_psd_spectrum(self):
         freqs, psd = welch(self.data, fs=self.sfreq, nperseg=self.sfreq * 2)
         mean_psd = np.mean(psd, axis=0)
-
         peak_freq = freqs[np.argmax(mean_psd)]
 
-        plt.figure()
+        plt.figure(num="PSD Spectrum")
         plt.semilogy(freqs, mean_psd, color='#2c3e50', linewidth=2)
         plt.axvline(peak_freq, color='r', linestyle='--', alpha=0.5, label=f'Peak: {peak_freq:.1f}Hz')
 
@@ -88,10 +89,8 @@ class AdvancedEDA:
         plt.title("4. Global Power Spectral Density")
         plt.xlim(0, 40)
         plt.legend()
+        plt.tight_layout()
         plt.show()
-
-        self._print_inference("Dominant Rhythm",
-                              f"Peak Frequency is {peak_freq:.1f} Hz. (Delta <4Hz often indicates sleep or pathology; Alpha 8-12Hz is normal resting).")
 
     # --- PLOT 5: BAND POWER BOXPLOT ---
     def plot_5_band_powers(self):
@@ -105,32 +104,26 @@ class AdvancedEDA:
             band_powers[band] = np.sum(psd[:, idx], axis=1) * freq_res
 
         df = pd.DataFrame(band_powers)
-        delta_alpha_ratio = np.mean(df['Delta']) / np.mean(df['Alpha'])
 
-        plt.figure()
+        plt.figure(num="Band Powers")
         sns.boxplot(data=df, palette='Set2')
         plt.title("5. Frequency Band Power Distribution")
         plt.yscale('log')
+        plt.tight_layout()
         plt.show()
-
-        self._print_inference("Slowing Index",
-                              f"Delta/Alpha Ratio is {delta_alpha_ratio:.2f}. Higher values (>1.5) indicate 'slowing' common in inter-ictal seizure states.")
 
     # --- PLOT 6: CORRELATION HEATMAP ---
     def plot_6_connectivity(self):
         corr = np.corrcoef(self.data[:, :int(self.sfreq * 60)])
-        avg_corr = np.mean(np.abs(corr)) - (1 / corr.shape[0])  # Subtract diagonal roughly
 
-        plt.figure(figsize=(8, 8))
+        plt.figure(figsize=(8, 8), num="Connectivity")
         sns.heatmap(corr, xticklabels=self.ch_names, yticklabels=self.ch_names,
                     cmap='coolwarm', center=0, square=True, cbar_kws={"shrink": .8})
         plt.title("6. Spatial Connectivity (Correlation)")
+        plt.tight_layout()
         plt.show()
 
-        self._print_inference("Synchronization",
-                              f"Average connectivity is {avg_corr:.2f}. Seizures often cause hypersynchrony (values approaching 1.0 across focal areas).")
-
-    # --- PLOT 7: SPATIAL VARIANCE (HEAD MAP PROXY) ---
+    # --- PLOT 7: REGIONAL ENERGY ---
     def plot_7_spatial_variance(self):
         regions = {'Frontal': [], 'Temporal': [], 'Parietal': [], 'Occipital': []}
         for i, name in enumerate(self.ch_names):
@@ -144,63 +137,75 @@ class AdvancedEDA:
                 regions['Occipital'].append(self.variance[i])
 
         avg_vars = {k: np.mean(v) if v else 0 for k, v in regions.items()}
-        max_region = max(avg_vars, key=avg_vars.get)
 
-        plt.figure()
+        plt.figure(num="Regional Energy")
         plt.bar(avg_vars.keys(), avg_vars.values(), color=['#3498db', '#e74c3c', '#9b59b6', '#f1c40f'])
         plt.title("7. Regional Brain Energy")
         plt.ylabel("Avg Variance")
+        plt.tight_layout()
         plt.show()
-
-        self._print_inference("Lobe Localization",
-                              f"The {max_region} Lobe shows the highest energy. This is the primary suspect region.")
 
     # --- PLOT 8: SPECTROGRAM ---
     def plot_8_spectrogram(self):
         f, t, Sxx = spectrogram(self.data[0], fs=self.sfreq, nperseg=512)
-        plt.figure(figsize=(12, 5))
+        plt.figure(figsize=(12, 5), num="Spectrogram")
         plt.pcolormesh(t, f, 10 * np.log10(Sxx + 1e-10), shading='gouraud', cmap='magma')
         plt.title(f"8. Spectrogram (Channel {self.ch_names[0]})")
         plt.ylabel("Freq (Hz)")
         plt.ylim(0, 40)
         plt.colorbar(label='dB')
+        plt.tight_layout()
         plt.show()
 
-    # --- PLOT 9: LINE LENGTH TREND ---
+    # --- PLOT 9: PATIENT LEVEL SPECTROGRAM  ---
+    def plot_patient_spectrogram(self, channel_idx=0):
+        """ Plots spectrogram for the ENTIRE recording (Patient Level View) """
+        f, t, Sxx = spectrogram(self.data[channel_idx], fs=self.sfreq, nperseg=1024)
+
+        plt.figure(figsize=(15, 6), num=f"Patient Spectrogram Ch{channel_idx}")
+        plt.pcolormesh(t, f, 10 * np.log10(Sxx + 1e-10), shading='gouraud', cmap='magma')
+        plt.title(f"Patient-Level Spectrogram (Channel {channel_idx})")
+        plt.ylabel("Frequency (Hz)")
+        plt.xlabel("Time (s)")
+        plt.ylim(0, 50)
+        plt.colorbar(label='Power (dB)')
+        plt.tight_layout()
+        plt.show()
+
+    # --- PLOT 10: LINE LENGTH ---
     def plot_9_line_length(self):
         n_sec = self.data.shape[1] // self.sfreq
         ll_trend = [np.mean(np.sum(np.abs(np.diff(self.data[:, i * self.sfreq:(i + 1) * self.sfreq], axis=1)), axis=1))
                     for i in range(n_sec)]
 
         threshold = np.mean(ll_trend) + 3 * np.std(ll_trend)
-        spikes = np.sum(np.array(ll_trend) > threshold)
 
-        plt.figure(figsize=(12, 4))
+        plt.figure(figsize=(12, 4), num="Line Length")
         plt.plot(ll_trend, color='#e67e22', linewidth=1)
         plt.axhline(threshold, color='red', linestyle='--', label='Seizure Threshold')
         plt.title("9. Global Signal Complexity (Line Length)")
         plt.xlabel("Time (s)")
         plt.legend()
+        plt.tight_layout()
         plt.show()
 
-        self._print_inference("Event Detection",
-                              f"Found {spikes} time windows exceeding the 3-sigma anomaly threshold. These are high-probability seizure candidates.")
-
-    # --- PLOT 10: CIRCADIAN TREND ---
+    # --- PLOT 11: CIRCADIAN TREND ---
     def plot_10_circadian(self):
         mins = self.data.shape[1] // (self.sfreq * 60)
-        if mins < 2: return  # Too short
+        if mins < 2: return
 
         energy = [np.mean(self.data[:, i * 60 * self.sfreq:(i + 1) * 60 * self.sfreq] ** 2) for i in range(mins)]
 
-        plt.figure()
+        plt.figure(num="Circadian Trend")
         plt.plot(energy, marker='o', color='#8e44ad')
         plt.title("10. Circadian Trend (Energy/Min)")
         plt.xlabel("Minute")
+        plt.tight_layout()
         plt.show()
 
     def run_full_dashboard(self):
-        print("\n>>> GENERATING 10-PLOT DASHBOARD IN PYCHARM... <<<")
+        print("\n>>> GENERATING PLOTS (CHECK PYCHARM 'PLOTS' TAB)... <<<")
+        # Standard Plots
         self.plot_1_amplitude_histogram()
         self.plot_2_channel_variance()
         self.plot_3_artifact_scatter()
@@ -211,20 +216,23 @@ class AdvancedEDA:
         self.plot_8_spectrogram()
         self.plot_9_line_length()
         self.plot_10_circadian()
+
+        # New Patient-Level Plot
+        self.plot_patient_spectrogram(channel_idx=0)
+
         print("\n>>> DASHBOARD COMPLETE <<<")
 
 
 if __name__ == "__main__":
     from dataset_pipeline import EEGJanitor
 
-    # SETUP
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     test_file = os.path.join(base_dir, "seizure_system/data/raw_edf/chb_mit/chb01_03.edf")
 
     if os.path.exists(test_file):
         print(f"Loading {test_file}...")
         janitor = EEGJanitor()
-        clean_raw = janitor.process(test_file)
+        clean_raw, _ = janitor.process(test_file)
 
         if clean_raw:
             eda = AdvancedEDA(clean_raw, sfreq=256)
