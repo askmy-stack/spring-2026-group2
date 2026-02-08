@@ -1,107 +1,100 @@
-import os
 import mne
-from mne_bids import BIDSPath, read_raw_bids
+import numpy as np
+import scipy.io
 from pathlib import Path
+import os
 
 
 class UniversalReader:
+    """
+    A unified interface for loading EEG data from various formats
+    (EDF, CNT, BIDS, MAT) into a standardized MNE Raw object.
+    """
 
     def __init__(self, verbose=False):
         self.verbose = verbose
 
     def read(self, file_path, **kwargs):
-        """
-        Main entry point. Automatically detects format and routes to the correct loader.
-
-        Args:
-            file_path (str | Path): Path to file (.edf, .cnt) or BIDS root directory.
-            **kwargs: Extra arguments for specific MNE loaders (e.g., preload=True).
-
-        Returns:
-            mne.io.Raw: The loaded raw EEG data.
-        """
         path_obj = Path(file_path)
 
-        # 1. Check for BIDS (Directory or BIDSPath)
-        if self._is_bids(path_obj):
-            print(f"[Reader] Detected BIDS format: {file_path}")
+        # 1. MATLAB (.mat) Support
+        if path_obj.suffix.lower() == '.mat':
+            if self.verbose: print(f"[Reader] Detected MATLAB file: {file_path}")
+            return self._load_mat(file_path, **kwargs)
+
+        # 2. BIDS Support
+        elif self._is_bids(path_obj):
+            if self.verbose: print(f"[Reader] Detected BIDS format: {file_path}")
             return self._load_bids(file_path, **kwargs)
 
-        # 2. Check for CNT (Neuroscan)
+        # 3. Neuroscan CNT
         elif path_obj.suffix.lower() == '.cnt':
-            print(f"[Reader] Detected Neuroscan CNT: {file_path}")
+            if self.verbose: print(f"[Reader] Detected Neuroscan CNT: {file_path}")
             return self._load_cnt(file_path, **kwargs)
 
-        # 3. Check for EDF/EDF+ (European Data Format)
+        # 4. EDF/BDF
         elif path_obj.suffix.lower() in ['.edf', '.bdf', '.gdf']:
-            print(f"[Reader] Detected EDF/BDF: {file_path}")
+            if self.verbose: print(f"[Reader] Detected EDF/BDF: {file_path}")
             return self._load_edf(file_path, **kwargs)
 
-        # 4. Fallback (MNE Auto-detection for .fif, .vhdr, etc.)
+        # 5. Generic Fallback
         else:
-            print(f"[Reader] Attempting Generic MNE Load: {file_path}")
+            if self.verbose: print(f"[Reader] Attempting Generic MNE Load: {file_path}")
             return self._load_generic(file_path, **kwargs)
 
+    def _load_mat(self, file_path, sfreq=256, **kwargs):
+        """
+        Heuristic loader for .mat files. Finds the largest array and treats it as EEG.
+        """
+        try:
+            mat = scipy.io.loadmat(file_path)
+        except NotImplementedError:
+            # Handle MATLAB v7.3 (HDF5 based) if needed, requires h5py
+            raise ValueError("Old .mat format supported. For v7.3+, install h5py.")
+
+        # Heuristic: Find the data variable (largest array)
+        data_key = None
+        max_size = 0
+        for key, val in mat.items():
+            if isinstance(val, np.ndarray) and key not in ['__header__', '__version__', '__globals__']:
+                if val.size > max_size:
+                    max_size = val.size
+                    data_key = key
+
+        if data_key is None:
+            raise ValueError(f"Could not find EEG data array inside {file_path}")
+
+        data = mat[data_key]
+
+        # Ensure shape is (Channels, Time)
+        if data.shape[0] > data.shape[1] and data.shape[1] < 128:
+            # Assume strict channel limit to avoid flipping long recordings
+            data = data.T
+
+            # Create Dummy Info (MAT files often lack headers)
+        ch_names = [f"Ch{i + 1}" for i in range(data.shape[0])]
+        info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types='eeg')
+        raw = mne.io.RawArray(data, info, verbose=self.verbose)
+        return raw
+
     def _is_bids(self, path_obj):
-        """Simple heuristic to detect BIDS structure."""
-        # If it's a directory containing 'dataset_description.json', it's a BIDS root
-        if path_obj.is_dir():
-            if (path_obj / "dataset_description.json").exists():
-                return True
+        if path_obj.is_dir() and (path_obj / "dataset_description.json").exists(): return True
         return False
 
-    def _load_cnt(self, file_path, **kwargs):
-        """
-        Loads Neuroscan .CNT files.
-        Crucial: CNT often requires 'preload=True' to handle large headers correctly.
-        """
-        # CNT files often have date issues, 'auto' usually fixes them.
-        return mne.io.read_raw_cnt(
-            file_path,
-            preload=kwargs.get('preload', True),  # CNT often needs preloading
-            data_format='auto',
-            date_format='mm/dd/yy',
-            verbose=self.verbose
-        )
+    def _load_cnt(self, fp, **kwargs):
+        return mne.io.read_raw_cnt(fp, preload=kwargs.get('preload', True), verbose=self.verbose)
 
-    def _load_edf(self, file_path, **kwargs):
-        """Loads EDF/EDF+ files."""
-        return mne.io.read_raw_edf(
-            file_path,
-            preload=kwargs.get('preload', False),
-            verbose=self.verbose
-        )
+    def _load_edf(self, fp, **kwargs):
+        return mne.io.read_raw_edf(fp, preload=kwargs.get('preload', False), verbose=self.verbose)
 
     def _load_bids(self, bids_root, task=None, subject=None, **kwargs):
-        """
-        Loads BIDS datasets.
-        Note: BIDS is a structure, not a single file. You typically load a specific run.
-        """
-        # Construct a BIDS Path query
-        # This is a simplified loader that grabs the first matching run found
-        # In a real app, you would iterate over subjects/tasks.
         try:
-            from mne_bids import find_matching_paths
-
-            # Find all .edf/.vhdr/.cnt files in the BIDS folder
+            from mne_bids import find_matching_paths, read_raw_bids
             bids_paths = find_matching_paths(bids_root, tasks=task, subjects=subject)
-
-            if not bids_paths:
-                raise FileNotFoundError("No matching BIDS data found.")
-
-            # Load the first match (Example logic)
-            target_path = bids_paths[0]
-            print(f"[Reader] Loading BIDS Subject: {target_path.subject}, Task: {target_path.task}")
-
-            return read_raw_bids(target_path, verbose=self.verbose)
-
+            if not bids_paths: raise FileNotFoundError("No matching BIDS data found.")
+            return read_raw_bids(bids_paths[0], verbose=self.verbose)
         except ImportError:
-            raise ImportError("Please install 'mne-bids' to load BIDS datasets: pip install mne-bids")
+            raise ImportError("Install 'mne-bids' for BIDS support.")
 
-    def _load_generic(self, file_path, **kwargs):
-        """Fallback to MNE's smart generic loader."""
-        return mne.io.read_raw(file_path, preload=kwargs.get('preload', False), verbose=self.verbose)
-
-
-if __name__ == "__main__":
-    reader = UniversalReader(verbose=True)
+    def _load_generic(self, fp, **kwargs):
+        return mne.io.read_raw(fp, preload=kwargs.get('preload', False), verbose=self.verbose)
