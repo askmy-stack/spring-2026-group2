@@ -1,0 +1,25 @@
+dataset:
+  raw_root: "./data_raw"
+  results_root: "./results"
+  bids_root: "./results/bids_dataset"
+
+split:
+  train: 0.6
+  val: 0.2
+  test: 0.2
+  seed: 42
+
+windowing:
+  window_sec: 10
+  stride_sec: 10
+  seizure_overlap_threshold: 0.5
+
+signal:
+  target_sfreq: 256
+  bandpass: [1, 50]
+  notch: 60
+  normalize: true
+
+system:
+  n_jobs: -1  # Uses all CPU cores
+  cache_size: 10
