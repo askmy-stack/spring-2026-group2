@@ -1,0 +1,48 @@
+paths:
+  results_root: "results"
+
+signal:
+  target_sfreq: 256
+  bandpass_hz: [1, 50]
+  notch_hz: 60
+  reference: "average"
+
+preprocess:
+  qc:
+    flat_std_uv: 0.5
+    high_std_uv: 200.0
+    line_noise_ratio_thresh: 3.0
+    max_bad_channel_frac: 0.30
+
+  cache_cleaned_raw:
+    enabled: true
+    overwrite: true
+
+eda:
+  random_seed: 42
+  subjects_per_topic: 3          # set 2 or 3
+  clip_sec: 30
+
+  channel_plot:
+    max_channels_to_plot: 12
+    channel_pick_strategy: "lowest_std"   # "lowest_std" or "first"
+
+  seizure_buffer:
+    enabled: true
+    buffer_sec: 0                # YOU choose (0/10/30/60). Not hardcoded.
+    nonseizure_min_gap_sec: 60
+
+  buffer_grid_sec: [0, 10, 30, 60]  # for buffer sensitivity EDA
+
+  topics:
+    EDA1_clips_psd_spectrogram: true
+    EDA2_temporal_neighborhood: true
+    EDA3_noise_profile: true
+    EDA4_buffer_sensitivity_psd: true
+
+dataset_level:
+  seizure_duration_hist: true
+  recording_quality_summary: true
+  missing_channel_summary: true
+  seizure_stats_by_demographics: true
+  channel_coverage_report: true
