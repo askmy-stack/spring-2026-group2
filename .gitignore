@@ -1,0 +1,19 @@
+# Virtual environment
+.venv/
+
+# Raw EEG data
+data_raw/
+src/data_raw/
+seizure_system/data/
+*.edf
+*.fif
+
+# Outputs
+results/
+src/results/
+*.csv
+
+# IDE
+.idea/
+__pycache__/
+*.pyc

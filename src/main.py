@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
-from pipeline import SeizurePipeline
+from src.pipeline import SeizurePipeline
+
 
 # --- SMART PATH SETUP ---
 BASE_DIR = Path(__file__).parent.resolve()

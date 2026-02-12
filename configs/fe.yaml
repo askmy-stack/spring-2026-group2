@@ -1,0 +1,40 @@
+# Feature Engineering config (input = dataloader output, output = tabular features)
+
+io:
+  window_index_csv: "src/results/dataloader/window_index_train.csv"
+  output_csv: "src/results/features/features_train.csv"
+
+columns:
+  path: "path"
+  start_sec: "start_sec"
+  end_sec: "end_sec"
+  label: "label"
+
+fe:
+  sfreq: 256            # set to your dataset sampling rate (CHB-MIT often 256)
+  max_rows: 200         # optional; remove or set null for full run
+
+features:
+  time:
+    mean: true
+    std: true
+    rms: true
+    line_length: true
+    zero_crossing_rate: true
+    hjorth: true
+    skew: true
+    kurtosis: true
+
+  frequency:
+    welch:
+      nperseg_sec: 2
+      fmin: 0.5
+      fmax: 40
+    bands:
+      delta: [0.5, 4]
+      theta: [4, 8]
+      alpha: [8, 13]
+      beta:  [13, 30]
+      gamma: [30, 40]
+    relative_power: true
+    spectral_entropy: true

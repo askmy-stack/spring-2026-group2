@@ -1,88 +1,155 @@
 import numpy as np
-import pandas as pd
 from scipy.signal import welch
-from scipy.stats import skew, kurtosis, entropy
+from scipy.stats import skew, kurtosis
 
 
 class AdvancedFeatureExtractor:
-    def __init__(self, sfreq=256):
+    """
+    Computes per-channel time + frequency features from a window.
+
+    Input:  data shape (n_channels, n_times)
+    Output: dict of features (tabular row)
+    """
+
+    def __init__(self, sfreq=256, cfg=None):
         self.sfreq = sfreq
-        self.bands = {
-            'Delta': (0.5, 4), 'Theta': (4, 8),
-            'Alpha': (8, 12), 'Beta': (12, 30), 'Gamma': (30, 45)
-        }
+        self.cfg = cfg or {}
 
-    def _hjorth_params(self, epoch):
-        """ Calculate Hjorth Activity, Mobility, and Complexity """
-        # Activity = Variance
-        activity = np.var(epoch, axis=1)
+        # Pull bands from config if present, else defaults
+        bands_cfg = (
+            self.cfg.get("features", {})
+            .get("frequency", {})
+            .get("bands", None)
+        )
 
-        # Mobility = sqrt(var(deriv) / var(signal))
-        diff1 = np.diff(epoch, axis=1)
-        # Avoid division by zero
-        var_diff1 = np.var(diff1, axis=1)
-        mobility = np.sqrt(var_diff1 / (activity + 1e-10))
+        if bands_cfg:
+            self.bands = {k: tuple(v) for k, v in bands_cfg.items()}
+        else:
+            self.bands = {
+                "delta": (0.5, 4),
+                "theta": (4, 8),
+                "alpha": (8, 13),
+                "beta": (13, 30),
+                "gamma": (30, 40),
+            }
 
-        # Complexity = Mobility(deriv) / Mobility(signal)
-        diff2 = np.diff(diff1, axis=1)
-        mobility_deriv = np.sqrt(np.var(diff2, axis=1) / (var_diff1 + 1e-10))
-        complexity = mobility_deriv / (mobility + 1e-10)
+    # -------------------
+    # Time-domain helpers
+    # -------------------
+    def _line_length(self, x):
+        return np.sum(np.abs(np.diff(x)))
+
+    def _zero_crossing_rate(self, x):
+        return np.mean(np.diff(np.signbit(x)) != 0)
+
+    def _hjorth(self, x):
+        # Activity
+        activity = np.var(x)
+
+        # Mobility
+        dx = np.diff(x)
+        var_dx = np.var(dx)
+        mobility = np.sqrt(var_dx / (activity + 1e-12))
+
+        # Complexity
+        ddx = np.diff(dx)
+        var_ddx = np.var(ddx)
+        mobility_dx = np.sqrt(var_ddx / (var_dx + 1e-12))
+        complexity = mobility_dx / (mobility + 1e-12)
 
         return activity, mobility, complexity
 
-    def _petrosian_fd(self, epoch):
-        """ Petrosian Fractal Dimension """
-        diff = np.diff(epoch, axis=1)
-        # Count sign changes
-        n_delta = np.sum(np.diff(np.sign(diff), axis=1) != 0, axis=1)
-        n = epoch.shape[1]
-        return np.log10(n) / (np.log10(n) + np.log10(n / (n + 0.4 * n_delta + 1e-10)))
+    # ------------------------
+    # Frequency-domain helpers
+    # ------------------------
+    def _bandpower(self, freqs, psd, band):
+        lo, hi = band
+        idx = (freqs >= lo) & (freqs <= hi)
+        return np.trapz(psd[idx], freqs[idx]) if np.any(idx) else 0.0
 
-    def extract(self, epoch):
-        """
-        Extracts features for one epoch.
-        Input: (Channels, Time)
-        Output: Flattened 1D Array of features
-        """
-        feats_dict = {}
+    def _spectral_entropy(self, psd):
+        p = psd / (np.sum(psd) + 1e-12)
+        p = np.clip(p, 1e-12, 1.0)
+        return -np.sum(p * np.log(p))
 
-        # 1. Statistical Moments
-        feats_dict['mean'] = np.mean(epoch, axis=1)
-        feats_dict['std'] = np.std(epoch, axis=1)
-        feats_dict['skew'] = skew(epoch, axis=1)
-        feats_dict['kurt'] = kurtosis(epoch, axis=1)
+    # -------------------
+    # Main extraction
+    # -------------------
+    def extract(self, data):
+        feats = {}
 
-        # 2. Hjorth Parameters
-        act, mob, comp = self._hjorth_params(epoch)
-        feats_dict['hjorth_act'] = act
-        feats_dict['hjorth_mob'] = mob
-        feats_dict['hjorth_comp'] = comp
+        time_cfg = self.cfg.get("features", {}).get("time", {})
+        freq_cfg = self.cfg.get("features", {}).get("frequency", {})
 
-        # 3. Fractal Dimension
-        feats_dict['fractal_dim'] = self._petrosian_fd(epoch)
+        n_channels = data.shape[0]
 
-        # 4. Spectral Features
-        freqs, psd = welch(epoch, fs=self.sfreq, nperseg=min(256, epoch.shape[1]))
-        freq_res = freqs[1] - freqs[0]
-        total_power = np.sum(psd, axis=1)
+        for ch in range(n_channels):
+            x = data[ch, :].astype(np.float64)
 
-        for band, (low, high) in self.bands.items():
-            idx = np.logical_and(freqs >= low, freqs <= high)
-            power = np.sum(psd[:, idx], axis=1) * freq_res
-            feats_dict[f'pow_{band}'] = power
-            feats_dict[f'rel_{band}'] = power / (total_power + 1e-10)
+            prefix = f"ch{ch}_"
 
-        # Spectral Entropy
-        psd_norm = psd / np.sum(psd, axis=1, keepdims=True)
-        feats_dict['spec_ent'] = -np.sum(psd_norm * np.log2(psd_norm + 1e-12), axis=1)
+            # ---- time domain ----
+            if time_cfg.get("mean", True):
+                feats[prefix + "mean"] = float(np.mean(x))
+            if time_cfg.get("std", True):
+                feats[prefix + "std"] = float(np.std(x))
+            if time_cfg.get("rms", True):
+                feats[prefix + "rms"] = float(np.sqrt(np.mean(x ** 2)))
+            if time_cfg.get("line_length", True):
+                feats[prefix + "line_length"] = float(self._line_length(x))
+            if time_cfg.get("zero_crossing_rate", True):
+                feats[prefix + "zcr"] = float(self._zero_crossing_rate(x))
+            if time_cfg.get("skew", True):
+                feats[prefix + "skew"] = float(skew(x))
+            if time_cfg.get("kurtosis", True):
+                feats[prefix + "kurtosis"] = float(kurtosis(x))
 
-        # Flatten Dictionary to 1D Array
-        # We average across channels for the 'Global' features,
-        # or we can concatenate. For XGBoost, flattening is common.
-        # Here we take MEAN across channels to keep feature count manageable for baseline.
-        flattened = []
-        for k, v in feats_dict.items():
-            flattened.append(np.mean(v))  # Global Average
-            flattened.append(np.std(v))  # Global Spread
+            if time_cfg.get("hjorth", True):
+                act, mob, comp = self._hjorth(x)
+                feats[prefix + "hjorth_activity"] = float(act)
+                feats[prefix + "hjorth_mobility"] = float(mob)
+                feats[prefix + "hjorth_complexity"] = float(comp)
 
-        return np.array(flattened)
+            # ---- frequency domain ----
+            if freq_cfg:
+                welch_cfg = freq_cfg.get("welch", {})
+                nperseg_sec = float(welch_cfg.get("nperseg_sec", 2))
+                fmin = float(welch_cfg.get("fmin", 0.5))
+                fmax = float(welch_cfg.get("fmax", 40))
+
+                nperseg = int(nperseg_sec * self.sfreq)
+
+                freqs, psd = welch(
+                    x,
+                    fs=self.sfreq,
+                    nperseg=min(nperseg, len(x)),
+                    noverlap=0,
+                    scaling="density",
+                )
+
+                # limit freq range
+                mask = (freqs >= fmin) & (freqs <= fmax)
+                freqs = freqs[mask]
+                psd = psd[mask]
+
+                total_power = np.trapz(psd, freqs) if len(freqs) else 0.0
+
+                # band powers
+                band_powers = {}
+                for band_name, band_rng in self.bands.items():
+                    bp = self._bandpower(freqs, psd, band_rng)
+                    feats[prefix + f"{band_name}_power"] = float(bp)
+                    band_powers[band_name] = bp
+
+                feats[prefix + "total_power"] = float(total_power)
+
+                # relative power
+                if freq_cfg.get("relative_power", True):
+                    for band_name, bp in band_powers.items():
+                        feats[prefix + f"{band_name}_rel_power"] = float(bp / (total_power + 1e-12))
+
+                # spectral entropy
+                if freq_cfg.get("spectral_entropy", True):
+                    feats[prefix + "spectral_entropy"] = float(self._spectral_entropy(psd))
+
+        return feats
