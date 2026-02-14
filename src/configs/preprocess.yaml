@@ -1,0 +1,63 @@
+# configs/preprocess.yaml
+# EEG Seizure Detection - Preprocessing (Steps 1–4)
+
+dataset:
+  bids_root: "results/bids_dataset"
+
+preprocess:
+  out_root: "results/preprocess"
+
+  bids:
+    datatype: "eeg"
+    suffix: "eeg"
+    extension: null
+    task: null
+
+  resample:
+    target_sfreq: 256
+
+  # -------------------------
+  # Filtering options
+  # -------------------------
+  filter:
+    l_freq: 0.5
+    h_freq: 40.0
+    notch_freqs: [60.0]
+    method: "fir"
+    iir_params: null
+
+    # wavelet denoising parameters (used when enabled)
+    use_wavelet: false
+    wavelet:
+      family: "db4"
+      level: null
+      threshold: "soft"
+
+  # -------------------------
+  # PSD output settings
+  # -------------------------
+  psd:
+    enabled: true
+    method: "welch"        # "welch" or "multitaper"
+    fmin: 0.5
+    fmax: 40.0
+    save_csv: true
+    save_plot: false
+
+  # -------------------------
+  # QC metrics settings
+  # -------------------------
+  qc:
+    enabled: true
+    max_abs_uV: 500.0
+    flat_var_thresh: 1.0e-12
+    nan_allowed: false
+
+  # -------------------------
+  # Wavelet decision logic (auto-enable)
+  # -------------------------
+  wavelet:
+    auto_enable: false
+    line_noise_ratio_threshold: 0.08
+    line_noise_bandwidth_hz: 1.0
+    noisy_channel_frac_threshold: 0.30
