@@ -1,0 +1,40 @@
+dataset:
+  raw_root: "../seizure_system/data/raw_edf"
+  results_root: "results"
+  bids_root: "results/bids_dataset"
+
+split:
+  policy: "subject_independent"
+  train: 0.70
+  val: 0.15
+  test: 0.15
+  seed: 42
+  enforce_stratification: true
+  age_bins: [0, 5, 10, 15, 20, 30, 100]
+
+channels:
+  policy: "standard_16_mixed"
+  target_count: 16
+  standard_set: [
+    "Fp1", "Fp2", "F3", "F4", "F7", "F8", "Fz", "Cz",
+    "T7", "T8", "P7", "P8", "C3", "C4", "O1", "O2"
+  ]
+
+windowing:
+  enable: true
+  label_mode: "event"
+  exclude_negatives_within_sec: 300
+  window_sets:
+    - { name: "w4_s2", window_sec: 4.0, stride_sec: 2.0 }
+    - { name: "w8_s4", window_sec: 8.0, stride_sec: 4.0 }
+  positive_if_overlap_sec: 1.0
+
+signal:
+  target_sfreq: 256
+  bandpass: [1.0, 50.0]
+  notch: 60.0
+  reject_threshold: null
+
+system:
+  n_jobs: -1
+  cache_size: 10

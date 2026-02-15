@@ -1,0 +1,24 @@
+paths:
+  # This MUST match where your Dataloader saved the files
+  bids_root: "results/bids_dataset"
+
+signal:
+  target_sfreq: 256
+  bandpass_hz: [1, 50]
+  notch_hz: 60
+  reference: "average"
+
+eda:
+  random_seed: 42
+  clip_sec: 10
+  seizure_buffer_sec: 10
+  nonseizure_min_gap_sec: 30
+  channels_for_viz: 16
+  subjects_per_group_per_topic: 2  # Keep it small for speed
+  n_topics: 4
+  seizure_keywords: ["seiz", "seizure", "ictal"]
+
+outputs:
+  results_root: "results"
+  figs_dir: "results/figs"
+  tables_dir: "results/tables"
