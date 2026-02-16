@@ -1,40 +1,297 @@
+# ============================================================================
+#  EEG DATA LOADER - CONFIGURATION
+# ============================================================================
+
 dataset:
   raw_root: "../seizure_system/data/raw_edf"
   results_root: "results"
   bids_root: "results/bids_dataset"
 
-split:
-  policy: "subject_independent"
-  train: 0.70
-  val: 0.15
-  test: 0.15
-  seed: 42
-  enforce_stratification: true
-  age_bins: [0, 5, 10, 15, 20, 30, 100]
+# ============================================================================
+#  SIGNAL PROCESSING
+# ============================================================================
+signal:
+  # Target sampling frequency (Hz)
+  target_sfreq: 256
 
+  # Bandpass filter [low_freq, high_freq] in Hz
+  # Set to null to disable
+  bandpass: [1.0, 50.0]
+
+  # Notch filter frequency (Hz) - removes powerline noise
+  # Common values: 60 (US), 50 (EU)
+  # Set to null to disable
+  notch: 60.0
+
+  # Rejection threshold for bad channels (null = disabled)
+  reject_threshold: null
+
+# ============================================================================
+#  RESAMPLING & AUGMENTATION
+# ============================================================================
+resampling:
+  # Default method: 'polyphase' (best quality)
+  # Options: polyphase, fft, decimate, avg_pool, simple
+  default_method: "polyphase"
+
+  # Generate augmented versions for files > target_sfreq
+  # Creates 5 versions using different downsampling methods
+  augment_on_ingestion: true
+
+# ============================================================================
+#  CHANNEL STANDARDIZATION
+# ============================================================================
 channels:
+  # Channel selection policy
   policy: "standard_16_mixed"
+
+  # Target number of channels
   target_count: 16
+
+  # Standard 10-20 channel set
   standard_set: [
     "Fp1", "Fp2", "F3", "F4", "F7", "F8", "Fz", "Cz",
     "T7", "T8", "P7", "P8", "C3", "C4", "O1", "O2"
   ]
 
+  # Interpolation settings
+  interpolation:
+    enable: true
+    method: "spherical_spline"  # or "nearest_neighbor"
+    min_channels_required: 4
+
+# ============================================================================
+#  WINDOWING
+# ============================================================================
 windowing:
+  # Enable windowing
   enable: true
-  label_mode: "event"
+
+  # Window duration in seconds
+  # NOTE: For optimal granularity, use 1.0 second
+  window_sec: 1.0
+
+  # Stride/step size in seconds (for sliding windows)
+  # Set equal to window_sec for non-overlapping windows
+  stride_sec: 1.0
+
+  # Label assignment mode
+  label_mode: "event"  # or "continuous"
+
+  # Exclude negative (background) windows near seizures
+  # within this time window (seconds)
   exclude_negatives_within_sec: 300
+
+  # Alternative: Define multiple window configurations
+  # (Currently using single window_sec, but can extend)
   window_sets:
-    - { name: "w4_s2", window_sec: 4.0, stride_sec: 2.0 }
-    - { name: "w8_s4", window_sec: 8.0, stride_sec: 4.0 }
-  positive_if_overlap_sec: 1.0
+    - { name: "w1_s1", window_sec: 1.0, stride_sec: 1.0 }
+    # Uncomment to add more:
+    # - { name: "w4_s2", window_sec: 4.0, stride_sec: 2.0 }
+    # - { name: "w8_s4", window_sec: 8.0, stride_sec: 4.0 }
 
-signal:
-  target_sfreq: 256
-  bandpass: [1.0, 50.0]
-  notch: 60.0
-  reject_threshold: null
+# ============================================================================
+#  LABELING STRATEGY
+# ============================================================================
+labeling:
+  # Labeling mode: 'binary' or 'multiclass'
+  # binary: 0=background, 1=seizure
+  # multiclass: 0=background, 1+=seizure types
+  mode: "binary"
 
+  # Overlap threshold: fraction of window that must overlap with seizure
+  # to be labeled as positive (0.0 to 1.0)
+  # 0.5 means >=50% of window must contain seizure
+  overlap_threshold: 0.5
+
+  # Multi-class seizure type mapping (if mode=multiclass)
+  seizure_types:
+    background: 0
+    unknown: 1
+    focal: 2
+    generalized: 3
+    absence: 4
+    tonic_clonic: 5
+
+# ============================================================================
+#  DATASET BALANCING
+# ============================================================================
+balance:
+  # Enable dataset balancing (oversampling seizures)
+  enable: true
+
+  # Target ratio of seizure windows (0.0 to 1.0)
+  # 0.3 = 30% seizures, 70% background
+  # Only applies to training set
+  seizure_ratio: 0.3
+
+  # Balancing method: 'oversample' or 'undersample'
+  method: "oversample"
+
+  # Random seed for reproducibility
+  seed: 42
+
+# ============================================================================
+#  TRAIN/VAL/TEST SPLIT
+# ============================================================================
+split:
+  # Split policy: 'subject_independent' or 'random'
+  policy: "subject_independent"
+
+  # Split ratios (must sum to 1.0)
+  train: 0.70
+  val: 0.15
+  test: 0.15
+
+  # Random seed
+  seed: 42
+
+  # Enforce stratification (maintain label distribution)
+  enforce_stratification: true
+
+  # Age bins for stratified splitting (optional)
+  age_bins: [0, 5, 10, 15, 20, 30, 100]
+
+# ============================================================================
+#  CACHING SYSTEM
+# ============================================================================
+caching:
+  # Enable in-memory caching
+  enable: true
+
+  # Cache capacity (number of items)
+  # Higher = more memory, faster access
+  cache_size: 100
+
+  # What to cache:
+  cache_raw: true              # Raw MNE objects
+  cache_preprocessed: true     # Preprocessed signals
+  cache_tensors: true          # Windowed tensors
+
+  # Auto-clear cache when memory usage exceeds this (MB)
+  # null = no limit
+  max_memory_mb: 4096
+
+# ============================================================================
+#  METADATA HANDLING (for non-EEG formats)
+# ============================================================================
+metadata:
+  # Default values if metadata not found
+  defaults:
+    age: null
+    sex: "unknown"
+    sfreq: 256
+
+  # Look for companion metadata files
+  search_companion_files: true
+
+  # Companion file extensions to check
+  companion_extensions: [".json", ".yaml", ".yml", ".txt", ".meta"]
+
+  # Parse metadata from filename patterns
+  parse_filename: true
+
+  # Filename patterns (regex)
+  filename_patterns:
+    age: "_?age?_?(\\d+)"
+    sex: "_?(male|female|m|f)_?"
+    sfreq: "_?(sf|sfreq|hz)?_?(\\d+)hz?"
+
+# ============================================================================
+#  SYSTEM SETTINGS
+# ============================================================================
 system:
+  # Number of parallel jobs (-1 = all CPUs)
   n_jobs: -1
-  cache_size: 10
+
+  # Logging level: DEBUG, INFO, WARNING, ERROR
+  log_level: "INFO"
+
+  # Show progress bars
+  show_progress: true
+
+  # Random seed for reproducibility
+  random_seed: 42
+
+# ============================================================================
+#  EXPORT & REPORTING
+# ============================================================================
+export:
+  # Save metadata JSON sidecars for each BIDS file
+  save_metadata_json: true
+
+  # Generate dataset summary report
+  generate_summary: true
+
+  # Save index CSVs
+  save_indices: true
+
+  # Export paths
+  metadata_dir: "results/dataloader/metadata"
+  reports_dir: "results/reports"
+
+# ============================================================================
+#  VALIDATION & VERIFICATION
+# ============================================================================
+validation:
+  # Verify data integrity during loading
+  verify_on_load: false
+
+  # Number of samples to verify
+  num_samples_to_verify: 10
+
+  # Checks to perform
+  checks:
+    check_nans: true
+    check_infs: true
+    check_range: true  # Flag values > 1e6
+    check_shape: true
+
+  # Auto-fix issues
+  auto_fix:
+    remove_nans: false
+    clip_extreme_values: false
+
+# ============================================================================
+#  NOTES
+# ============================================================================
+# NEW FEATURES IN THIS VERSION:
+#
+# 1. Intelligent Resampling:
+#    - Polyphase filtering for 512->256 Hz (best quality)
+#    - 5 augmentation methods for data diversity
+#
+# 2. Universal Format Support:
+#    - EDF, CSV, Parquet, MAT, TSV with metadata extraction
+#    - Companion file search (.json, .yaml)
+#    - Filename pattern parsing
+#
+# 3. Spherical Spline Interpolation:
+#    - Missing channel interpolation using 10-20 montage
+#    - Spatial awareness for better signal reconstruction
+#
+# 4. Memory Caching:
+#    - LRU cache for raw, preprocessed, and tensor data
+#    - Configurable capacity
+#    - Cache statistics tracking
+#
+# 5. Intelligent Labeling:
+#    - Binary & multi-class support
+#    - Overlap-based label assignment
+#    - Configurable threshold
+#
+# 6. Dataset Balancing:
+#    - Oversample minority class (seizures)
+#    - Configurable target ratio
+#    - Training set only
+#
+# 7. Static Verification:
+#    - Comprehensive integrity checks
+#    - Type, shape, NaN, Inf validation
+#    - Dataset-wide verification function
+#
+# 8. BIDS Compatibility:
+#    - Maintained throughout
+#    - JSON sidecars with full metadata
+#    - Standard directory structure
+# ============================================================================
