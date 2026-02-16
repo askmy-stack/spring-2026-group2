@@ -1,0 +1,112 @@
+# configs/preprocess.yaml
+# EEG Seizure Detection - Preprocessing (Steps 1–4)
+
+dataset:
+  bids_root: "results/bids_dataset"
+
+preprocess:
+  out_root: "results/preprocess"
+
+  bids:
+    datatype: "eeg"
+    suffix: "eeg"
+    extension: null
+    task: null
+
+  resample:
+    target_sfreq: 256
+
+  # -------------------------
+  # Filtering options
+  # -------------------------
+  filter:
+    l_freq: 1
+    h_freq: 40.0
+    notch_freqs: [60.0] #EEG recordings often pick up power-line interference: 60 Hz (common in the US)
+    method: "fir"
+    iir_params: null
+
+    # wavelet denoising parameters (used when enabled)
+    use_wavelet: false
+    wavelet:
+      family: "db4"
+      level: null
+      threshold: "soft"
+
+  # -------------------------
+  # PSD output settings
+  # -------------------------
+  psd:
+    enabled: true
+    method: "welch"        # "welch" or "multitaper"
+    fmin: 0.5
+    fmax: 40.0
+    save_csv: true
+    save_plot: false
+
+  # -------------------------
+  # QC metrics settings
+  # -------------------------
+  qc:
+    enabled: true
+    max_abs_uV: 500.0
+    flat_var_thresh: 1.0e-12
+    nan_allowed: false
+
+  # -------------------------
+  # Wavelet decision logic (auto-enable)
+  # -------------------------
+  wavelet:
+    auto_enable: false
+    line_noise_ratio_threshold: 0.08
+    line_noise_bandwidth_hz: 1.0
+    noisy_channel_frac_threshold: 0.30
+
+
+time_domain:
+  enabled: true
+
+  # Output locations (under preprocess.out_root)
+  save_clean_raw_fif: true
+  save_epochs_fif: true
+  save_epoch_stats_csv: true
+  save_plots: true
+
+  # Re-referencing
+  reref:
+    enabled: true
+    type: "average"          # "average" or "custom"
+    custom_ref_channels: null # if type="custom", list channels
+
+  # Bad channel detection + interpolation (generic, safe defaults)
+  bad_channels:
+    enabled: true
+    method: "variance_zscore"   # simple & explainable
+    z_thresh: 5.0
+    flat_var_thresh: 1.0e-12
+    interpolate: true
+
+  # Artifact rejection (epoch-level)
+  reject:
+    enabled: true
+    # peak-to-peak amplitude threshold in microvolts (tune later)
+    reject_eeg_ptp_uV: 500.0
+
+  # ICA (eye/muscle artifact removal)
+  ica:
+    enabled: false
+    n_components: 0.99       # float (variance) or int
+    method: "fastica"
+    random_state: 97
+    max_iter: 512
+    # If you have EOG channels later, MNE can auto-detect EOG ICs
+    detect_eog: false
+    eog_chs: null            # e.g., ["EOG1", "EOG2"]
+
+  # Epoching
+  epoching:
+    enabled: true
+    mode: "fixed"            # "fixed" for fixed-length windows
+    duration_sec: 2.0
+    overlap_sec: 1.0         # 50% overlap; set 0 for non-overlapping
+    baseline: null           # usually null for EEG

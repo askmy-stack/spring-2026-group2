@@ -1,0 +1,138 @@
+run:
+  diagrams: true
+  preprocess: true
+  write_bids: true
+  eda: true
+
+dataset:
+  bids_root: "results/bids_dataset"
+
+outputs:
+  bids_out_root: "results/preprocess/bids"
+  eda_root: "results/preprocess/eda"
+  diagrams_root: "results/preprocess/diagrams"
+
+bids:
+  datatype: "eeg"
+  suffix: "eeg"
+  extension: null
+  task: null
+
+preprocess:
+  preload: true
+
+  resample:
+    enabled: true
+    target_sfreq: 256
+
+  rereference:
+    enabled: false
+    ref_channels: "average"
+
+  filtering:
+    enabled: true
+    l_freq: 1.0
+    h_freq: 40.0
+    notch_freqs: [60.0]
+    method: "fir"            # "fir" or "iir"
+    iir_params: null
+
+  wavelet_denoise:
+    enabled: false
+    family: "db4"
+    level: null
+    threshold: "soft"        # "soft" or "hard"
+
+
+analysis:
+  labels:
+    enabled: true
+    tsv:
+      use_bids_events: true
+      path: null
+
+      onset_col: "onset"
+      duration_col: "duration"
+      label_col: "trial_type"
+      seizure_values: ["seizure"]
+
+  comparisons:
+    enabled: true
+    # how many non-seizure segments to sample:
+    # "match_seizure_count" => same count as seizure segments
+    non_seizure_policy: "match_seizure_count"
+    random_seed: 0
+
+
+  time_domain:
+    qc:
+      enabled: true
+      max_abs_uV: 500.0
+      flat_var_thresh_uV2: 1.0e-12
+      nan_allowed: false
+      noisy_var_factor: 10.0
+
+    bad_channels:
+      enabled: true
+      use_qc_rules: true
+      interpolate: true
+      require_montage: false
+
+    epoching:
+      enabled: true
+      length_sec: 2.0
+      overlap_sec: 1.0
+      baseline: null
+
+    artifact_rejection:
+      enabled: true
+      reject:
+        eeg: 200e-6           # 200 µV
+      flat:
+        eeg: 1e-6             # 1 µV
+
+  frequency_domain:
+    psd:
+      enabled: true
+      method: "welch"         # "welch" or "multitaper"
+      fmin: 0.5
+      fmax: 40.0
+
+    bandpower:
+      enabled: true
+      bands:
+        delta: [0.5, 4.0]
+        theta: [4.0, 8.0]
+        alpha: [8.0, 13.0]
+        beta:  [13.0, 30.0]
+        gamma: [30.0, 40.0]
+
+  time_frequency:
+    enabled: true
+
+    stft:
+      enabled: true
+      fmin: 0.5
+      fmax: 40.0
+      nperseg_sec: 2.0
+      noverlap_frac: 0.5
+      pick_channel: null
+
+    morlet_tfr:
+      enabled: true
+      fmin: 2.0
+      fmax: 40.0
+      n_freqs: 30
+      n_cycles: 7
+
+eda:
+  save_csv: true #PSD mean CSV, bandpower CSV, STFT summary CSV, seizure vs non-seizure comparison CSVs
+  save_plots: true
+  plot_raw_vs_filtered: true
+  plot_psd: false
+  plot_psd_per_channel: true
+  plot_stft: true
+  plot_epochs: true
+  plot_tfr: true
+  seconds_to_plot: 10.0
+

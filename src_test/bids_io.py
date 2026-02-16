@@ -50,27 +50,21 @@ class BIDSLoader:
             for se in sess:
                 for t in tasks:
                     for r in runs:
-                        recs.append(
-                            BIDSRecording(
-                                subject=s,
-                                session=se,
-                                task=t,
-                                run=r,
-                                datatype=self.datatype,
-                                suffix=self.suffix,
-                            )
-                        )
+                        recs.append(BIDSRecording(
+                            subject=s, session=se, task=t, run=r,
+                            datatype=self.datatype, suffix=self.suffix
+                        ))
         return recs
 
-    def make_bidspath(self, rec: BIDSRecording, root: str | Path, extension: Optional[str] = None, suffix: Optional[str] = None) -> "BIDSPath":
+    def make_bidspath(self, rec: BIDSRecording, extension: Optional[str] = None) -> "BIDSPath":
         return BIDSPath(
-            root=Path(root),
+            root=self.bids_root,
             subject=rec.subject,
             session=rec.session,
             task=rec.task,
             run=rec.run,
             datatype=rec.datatype,
-            suffix=(suffix or rec.suffix),
+            suffix=rec.suffix,
             extension=extension,
         )
 
@@ -79,29 +73,17 @@ class BIDSLoader:
         rec: BIDSRecording,
         *,
         preload: bool = True,
-        extension: Optional[str] = None,
         verbose: bool | str = False,
+        extension: Optional[str] = None,
     ) -> mne.io.BaseRaw:
         if not MNE_BIDS_AVAILABLE:
             raise ImportError("mne-bids is required. Install with: pip install mne-bids")
 
-        bp = self.make_bidspath(rec, root=self.bids_root, extension=extension, suffix=rec.suffix)
+        bp = self.make_bidspath(rec, extension=extension)
         raw = read_raw_bids(bp, verbose=verbose)
         if preload and not raw.preload:
             raw.load_data()
         return raw
-
-    def events_tsv_path(self, rec: BIDSRecording) -> Optional[Path]:
-        """
-        Try to locate the BIDS *_events.tsv file corresponding to this recording.
-        We build a BIDSPath with suffix='events' and extension='.tsv' and return it if it exists.
-        """
-        if not MNE_BIDS_AVAILABLE:
-            return None
-
-        bp = self.make_bidspath(rec, root=self.bids_root, extension=".tsv", suffix="events")
-        fpath = Path(bp.fpath)
-        return fpath if fpath.exists() else None
 
     @staticmethod
     def recording_id(rec: BIDSRecording) -> str:
