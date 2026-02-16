@@ -6,7 +6,7 @@ import yaml
 import pandas as pd
 import mne
 
-from src.feature_engineering import AdvancedFeatureExtractor
+from feature_engineering import AdvancedFeatureExtractor
 
 
 def parse_args():
@@ -172,3 +172,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
