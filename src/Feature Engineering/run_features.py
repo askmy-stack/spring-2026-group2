@@ -116,8 +116,8 @@ def main():
 
         raw = mne.io.read_raw_edf(edf_path, preload=True, verbose=False)
 
-        print("Channels:", raw.ch_names)                     #temporary code
-        print("Number of channels:", len(raw.ch_names))      #temperory code
+        print("Channels:", raw.ch_names)                     
+        print("Number of channels:", len(raw.ch_names))      #code to see the number of channels
 
         # Optional: pick only EEG channels if the file contains multiple types
         if cfg["bids"].get("pick_eeg_only", True):
@@ -172,4 +172,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
