@@ -1,39 +1,45 @@
-# EEG Seizure Detection – Feature Engineering
+# EEG Seizure Detection – Feature Engineering Module
 
-This folder contains the feature engineering part of our pipeline.
+## Overview
 
-The goal of this module is simple:
+This module converts BIDS-formatted EEG datasets into structured tabular feature datasets for machine learning.
 
-Take BIDS-formatted EEG recordings as input  
-Extract meaningful signal features  
-Generate a CSV file with window-level seizure labels (0 and 1)
+It:
+- Reads BIDS EEG recordings (*_eeg.edf)
+- Reads corresponding seizure annotations (*_events.tsv)
+- Applies sliding window segmentation
+- Extracts time and frequency domain features
+- Assigns binary seizure labels (0 = non-seizure, 1 = seizure)
+- Exports a training-ready CSV file
 
-This output will later be used for classical ML models and deep learning baselines.
+---
 
-------------------------------------------------------------
+# Core Files
 
-Files in this module
+project/
+├── run_features.py
+├── feature_engineering.py
+└── configs/
+    └── fe.yaml
 
-run_features.py  
-Main script that runs the full feature extraction pipeline.
+---
 
-feature_engineering.py  
-Contains the AdvancedFeatureExtractor class where all features are implemented.
+# Quick Start
 
-configs/fe.yaml  
-Configuration file. All paths and parameters are controlled from here.
-
-------------------------------------------------------------
-
-How to Run
-
-1) Install required libraries
+## 1. Install Dependencies
 
 pip install numpy pandas scipy mne PyYAML
 
-2) Edit configs/fe.yaml
+Optional virtual environment:
 
-Update the dataset path:
+python -m venv .venv
+.\.venv\Scripts\activate
+
+---
+
+## 2. Configure Paths
+
+Edit configs/fe.yaml:
 
 io:
   bids_root: "path/to/your/bids_dataset"
@@ -45,50 +51,100 @@ io:
   bids_root: "data/ds005873"
   output_csv: "results/features/features_ds005873.csv"
 
-3) Run the script
+---
+
+## 3. Run Feature Extraction
 
 python run_features.py --config configs/fe.yaml
 
-After it finishes, you will see a CSV file inside:
+---
 
-results/features/
+## 4. Output
 
-------------------------------------------------------------
+After execution:
 
-What the Script Does
+results/features/features_ds005873.csv
 
-Step 1 – It scans the BIDS root directory and finds all files ending with:
+Console output example:
+
+Shape: (78996, 25)
+
+0    78882
+1      114
+
+Where:
+0 = non-seizure windows
+1 = seizure windows
+
+---
+
+# How It Works
+
+## 1. Locate EEG Files
+
+The script recursively searches bids_root for:
 
 *_eeg.edf
 
-Step 2 – For each EEG file, it automatically finds the matching:
+---
 
-*_events.tsv
+## 2. Match Events File
 
-Step 3 – It reads seizure annotations from the events file.
+For each EEG file:
 
-If the eventType column starts with "sz", it is considered a seizure event.
+sub-001_ses-01_task-..._eeg.edf
 
-Step 4 – The recording is split into sliding windows.
+The script looks for:
 
-Window size and step size are controlled in fe.yaml:
+sub-001_ses-01_task-..._events.tsv
+
+This follows the BIDS naming convention.
+
+---
+
+## 3. Seizure Labeling Logic
+
+From events.tsv, the script reads:
+- onset
+- duration
+- eventType
+
+A window is labeled as seizure (1) if:
+
+eventType starts with "sz"
+
+Examples:
+- sz
+- sz_foc_ia_nm
+- sz_gen_m_tonicClonic
+
+Otherwise, the window is labeled 0.
+
+---
+
+## 4. Sliding Window Segmentation
+
+Configured in fe.yaml:
 
 windows:
   window_sec: 10
   step_sec: 5
 
-Step 5 – For each window, features are extracted and a label is assigned:
+Each recording is split into overlapping windows.
 
-0 → non-seizure  
-1 → seizure  
+Each window becomes one row in the output CSV.
 
-A window gets label 1 if it overlaps with any seizure interval.
+---
 
-------------------------------------------------------------
+## 5. Feature Extraction
 
-Features Extracted
+feature_engineering.py contains:
 
-Time domain:
+AdvancedFeatureExtractor
+
+It extracts:
+
+Time Domain Features:
 - Mean
 - Standard deviation
 - RMS
@@ -96,63 +152,110 @@ Time domain:
 - Zero crossing rate
 - Hjorth parameters
 
-Frequency domain:
-- Welch power spectral density
-- Delta band power
-- Theta band power
-- Alpha band power
-- Beta band power
-- Gamma band power
-- Relative band power
+Frequency Domain Features:
+- Welch Power Spectral Density
+- Band powers:
+  - Delta (0.5–4 Hz)
+  - Theta (4–8 Hz)
+  - Alpha (8–13 Hz)
+  - Beta (13–30 Hz)
+  - Gamma (30–50 Hz)
+- Relative power
 - Spectral entropy
 
-All features are computed per window.
+---
 
-------------------------------------------------------------
+# Output Format
 
-Output CSV Format
+Each row represents one EEG window.
 
-Each row represents one window.
+Example columns:
 
-Columns include:
-- Extracted signal features
-- label (0 or 1)
-- recording_path
-- events_path
-- start_sec
-- end_sec
+ch0_mean
+ch0_std
+ch0_rms
+delta_power
+theta_power
+alpha_power
+beta_power
+gamma_power
+label
+recording_path
+events_path
+start_sec
+end_sec
 
-Example:
+---
 
-label = 0 → background  
-label = 1 → seizure  
+# Label Definition
 
-------------------------------------------------------------
+Binary classification:
 
-Important Notes
+0 → non-seizure  
+1 → seizure  
 
-- Seizures are rare, so the dataset will be highly imbalanced.
-- Some datasets may have only 2 EEG channels (e.g., wearable EEG). That is normal.
-- The pipeline is dataset-agnostic as long as the dataset follows BIDS format.
+A window is labeled 1 if it overlaps any seizure interval.
 
-------------------------------------------------------------
+---
 
-Testing on Small Subsets
+# Configuration Example (fe.yaml)
 
-If you don’t want to run the full dataset, update:
+io:
+  bids_root: "data/ds005873"
+  output_csv: "results/features/features_ds005873.csv"
+
+bids:
+  modality: "eeg"
+  pick_eeg_only: true
+
+windows:
+  window_sec: 10
+  step_sec: 5
+
+limits:
+  max_files: null
+  max_windows: null
+
+labeling:
+  onset_col: "onset"
+  duration_col: "duration"
+  type_cols: ["eventType", "trial_type", "event_type"]
+  seizure_prefix: "sz"
+
+fe:
+  sfreq: 250
+  bands:
+    delta: [0.5, 4]
+    theta: [4, 8]
+    alpha: [8, 13]
+    beta: [13, 30]
+    gamma: [30, 50]
+
+---
+
+# Expected BIDS Structure
+
+bids_root/
+├── sub-001/
+│   └── ses-01/
+│       └── eeg/
+│           ├── sub-001_..._eeg.edf
+│           └── sub-001_..._events.tsv
+
+---
+
+# Testing Small Subsets
+
+To test quickly:
 
 limits:
   max_files: 2
   max_windows: 500
 
-This is useful for debugging.
+---
 
-------------------------------------------------------------
+# Notes
 
-Summary
-
-Input: BIDS EEG dataset  
-Output: Tabular CSV with window-level seizure labels  
-
-This module is fully controlled through fe.yaml and does not depend on dataset-specific hardcoding.
+- Seizures are rare; class imbalance is expected.
+- The module is dataset-agnostic as long as the dataset follows BIDS.
 
