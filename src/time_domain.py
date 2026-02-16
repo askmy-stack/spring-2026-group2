@@ -173,6 +173,24 @@ class TimeDomainModule:
         reject = get(self.cfg, "analysis.time_domain.artifact_rejection.reject", None)
         flat = get(self.cfg, "analysis.time_domain.artifact_rejection.flat", None)
 
+        def _cast_dict(d):
+            if not isinstance(d, dict):
+                return d
+            out = {}
+            for k, v in d.items():
+                # YAML sometimes loads scientific notation as string; cast if possible
+                if isinstance(v, str):
+                    try:
+                        out[k] = float(v)
+                    except Exception:
+                        out[k] = v
+                else:
+                    out[k] = v
+            return out
+
+        reject = _cast_dict(reject)
+        flat = _cast_dict(flat)
+
         out = epochs.copy()
         out.drop_bad(reject=reject, flat=flat)  # MNE
         return out

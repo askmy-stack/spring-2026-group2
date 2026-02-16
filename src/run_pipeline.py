@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import argparse
 from typing import Any, Dict
-
+from pathlib import Path
 from yaml_utils import load_yaml, get
 from bids_io import BIDSLoader
 from preprocessor import EEGPreprocessor
 from time_domain import TimeDomainModule
 from eda_engine import EDAEngine
 from bot_diagrams import DiagramBuilder
+from index_builder import WindowIndexBuilder
+
 
 
 def _enabled(cfg: Dict[str, Any], path: str, default: bool = False) -> bool:
@@ -60,6 +62,8 @@ def main():
     pre = EEGPreprocessor(cfg)
     td = TimeDomainModule(cfg)
     eda = EDAEngine(cfg)
+    idx_builder = WindowIndexBuilder(cfg)  # NEW
+    all_rows = []
 
     do_resample = run_preprocess and _enabled(cfg, "preprocess.resample.enabled", True)
     do_reref = run_preprocess and _enabled(cfg, "preprocess.rereference.enabled", False)
@@ -105,6 +109,7 @@ def main():
             cleaned = td.interpolate_bads(cleaned)
 
         # REQUIRED: write BIDS cleaned output
+        # REQUIRED: write BIDS cleaned output
         try:
             out_fpath = pre.write_bids_cleaned(
                 cleaned,
@@ -115,20 +120,33 @@ def main():
                 datatype=rec.datatype,
                 suffix=rec.suffix,
             )
+
+            # Build window index rows for this cleaned recording (producer artifact)
+            events_path = None
+            if labels_enabled and use_bids_events:
+                ep = loader.events_tsv_path(rec)
+                events_path = str(ep) if ep is not None else None
+
+            rows = idx_builder.build_rows_for_recording(
+                cleaned_fif_path=out_fpath,
+                recording_id=rid,
+                subject=rec.subject,
+                session=rec.session,
+                task=rec.task,
+                run=rec.run,
+                events_tsv_path=events_path,
+            )
+            all_rows.extend(rows)
+
         except Exception as e:
             print(f"[ERROR] {rid} failed to write BIDS output: {e}")
             continue
 
-        # Locate events.tsv for seizure vs non-seizure comparisons
-        events_path = None
-        if labels_enabled and use_bids_events:
-            ep = loader.events_tsv_path(rec)
-            events_path = str(ep) if ep is not None else None
-
         # Optional EDA
         if run_eda:
             try:
-                eda_out = eda.run(cleaned, rid, raw_before=raw_before, events_tsv_path=events_path)
+                eda_out = eda.run(cleaned, rid, raw_before=raw_before)
+                # If you want EDA to use events later, add support inside EDAEngine explicitly.
             except Exception as e:
                 eda_out = {"error": str(e)}
         else:
@@ -141,6 +159,10 @@ def main():
         print(f"  bids_out: {out_fpath}")
         print(f"  eda_out: {eda_out}")
 
+    index_root = get(cfg, "outputs.index_root", "results/dataloader")
+    index_path = Path(index_root) / "window_index_train.csv"
+    WindowIndexBuilder.write_csv(index_path, all_rows)
+    print(f"[OK] window index written: {index_path}")
     print("[DONE]")
 
 

@@ -11,11 +11,12 @@ outputs:
   bids_out_root: "results/preprocess/bids"
   eda_root: "results/preprocess/eda"
   diagrams_root: "results/preprocess/diagrams"
+  index_root: "results/dataloader"
 
 bids:
   datatype: "eeg"
   suffix: "eeg"
-  extension: null
+  extension: ".fif"
   task: null
 
 preprocess:
@@ -75,19 +76,19 @@ analysis:
     bad_channels:
       enabled: true
       use_qc_rules: true
-      interpolate: true
+      interpolate: false
       require_montage: false
 
     epoching:
       enabled: true
-      length_sec: 2.0
-      overlap_sec: 1.0
+      length_sec: 4.0
+      overlap_sec: 2.0
       baseline: null
 
     artifact_rejection:
-      enabled: true
+      enabled: false
       reject:
-        eeg: 200e-6           # 200 µV
+        eeg: 0.00001           # 200 µV
       flat:
         eeg: 1e-6             # 1 µV
 
@@ -120,7 +121,7 @@ analysis:
 
     morlet_tfr:
       enabled: true
-      fmin: 2.0
+      fmin: 4.0
       fmax: 40.0
       n_freqs: 30
       n_cycles: 7

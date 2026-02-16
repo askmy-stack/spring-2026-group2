@@ -13,33 +13,37 @@ class DiagramBuilder:
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
     def preprocessing_diagram(self) -> str:
-        return """flowchart TD
-  A[BIDS EEG Input] --> B[BIDSLoader.load_raw()]
-  B --> C[EEGPreprocessor (optional methods)]
-  C --> C1[ensure_loaded()]
-  C --> C2[resample() (optional)]
-  C --> C3[rereference() (optional)]
-  C --> C4[filtering (notch/bandpass) + wavelet (optional)]
-  C --> D[TimeDomainModule: QC -> mark bads -> interpolate (optional)]
-  D --> E[BIDSCleanedWriter.write_cleaned_raw()]
-  E --> F[Cleaned BIDS Output (.fif)]
-"""
+        lines = [
+            "flowchart TD",
+            "  A[BIDS EEG Input] --> B[BIDSLoader.load_raw()]",
+            "  B --> C[EEGPreprocessor (optional methods)]",
+            "  C --> C1[ensure_loaded()]",
+            "  C --> C2[resample() (optional)]",
+            "  C --> C3[rereference() (optional)]",
+            "  C --> C4[filtering (notch/bandpass) + wavelet (optional)]",
+            "  C --> D[TimeDomainModule: QC -> mark bads -> interpolate (optional)]",
+            "  D --> E[BIDSCleanedWriter.write_cleaned_raw()]",
+            "  E --> F[Cleaned BIDS Output (.fif)]",
+        ]
+        return "\n".join(lines) + "\n"
 
     def eda_diagram(self) -> str:
-        return """flowchart TD
-  A[Raw BEFORE + Raw AFTER] --> B[EDAEngine]
-  B --> T[TimeDomainModule]
-  T --> T1[QC JSON]
-  T --> T2[Epoching + drop_bad]
-  T --> T3[Epoch stats + epoch plots]
-  B --> F[FrequencyDomainAnalyzer]
-  F --> F1[PSD Welch/Multitaper]
-  F --> F2[Bandpower]
-  B --> TF[TimeFrequencyAnalyzer]
-  TF --> TF1[STFT spectrogram (explicit FFT)]
-  TF --> TF2[Morlet TFR]
-  B --> O[ArtifactWriter: CSV + plots]
-"""
+        lines = [
+            "flowchart TD",
+            "  A[Raw BEFORE + Raw AFTER] --> B[EDAEngine]",
+            "  B --> T[TimeDomainModule]",
+            "  T --> T1[QC JSON]",
+            "  T --> T2[Epoching + drop_bad]",
+            "  T --> T3[Epoch stats + epoch plots]",
+            "  B --> F[FrequencyDomainAnalyzer]",
+            "  F --> F1[PSD Welch/Multitaper]",
+            "  F --> F2[Bandpower]",
+            "  B --> TF[TimeFrequencyAnalyzer]",
+            "  TF --> TF1[STFT spectrogram (explicit FFT)]",
+            "  TF --> TF2[Morlet TFR]",
+            "  B --> O[ArtifactWriter: CSV + plots]",
+        ]
+        return "\n".join(lines) + "\n"
 
     def save_all(self) -> dict[str, str]:
         p1 = self.out_dir / "preprocessing.mmd"

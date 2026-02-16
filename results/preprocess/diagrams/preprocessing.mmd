@@ -1,0 +1,10 @@
+flowchart TD
+  A[BIDS EEG Input] --> B[BIDSLoader.load_raw()]
+  B --> C[EEGPreprocessor (optional methods)]
+  C --> C1[ensure_loaded()]
+  C --> C2[resample() (optional)]
+  C --> C3[rereference() (optional)]
+  C --> C4[filtering (notch/bandpass) + wavelet (optional)]
+  C --> D[TimeDomainModule: QC -> mark bads -> interpolate (optional)]
+  D --> E[BIDSCleanedWriter.write_cleaned_raw()]
+  E --> F[Cleaned BIDS Output (.fif)]

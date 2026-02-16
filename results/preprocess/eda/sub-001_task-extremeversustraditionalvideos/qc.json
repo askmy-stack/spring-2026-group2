@@ -1,0 +1,23 @@
+{
+  "sfreq": 256.0,
+  "n_channels_eeg": 14,
+  "has_nan": false,
+  "nan_frac": 0.0,
+  "median_var_uV2": 1438.2173870057889,
+  "flat_channels_idx": [],
+  "clipped_channels_idx": [
+    0,
+    1,
+    2,
+    4,
+    5,
+    6,
+    8,
+    9,
+    10,
+    12
+  ],
+  "noisy_channels_idx": [],
+  "noisy_channel_frac": 0.0,
+  "mean_kurtosis": 102.13962010471982
+}

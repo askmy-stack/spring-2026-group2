@@ -1,0 +1,13 @@
+flowchart TD
+  A[Raw BEFORE + Raw AFTER] --> B[EDAEngine]
+  B --> T[TimeDomainModule]
+  T --> T1[QC JSON]
+  T --> T2[Epoching + drop_bad]
+  T --> T3[Epoch stats + epoch plots]
+  B --> F[FrequencyDomainAnalyzer]
+  F --> F1[PSD Welch/Multitaper]
+  F --> F2[Bandpower]
+  B --> TF[TimeFrequencyAnalyzer]
+  TF --> TF1[STFT spectrogram (explicit FFT)]
+  TF --> TF2[Morlet TFR]
+  B --> O[ArtifactWriter: CSV + plots]

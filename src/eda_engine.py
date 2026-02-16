@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-
+from fft_analysis import FFTAnalyzer
 import mne
 import matplotlib.pyplot as plt
 
@@ -20,6 +20,7 @@ class EDAEngine:
         self.td = TimeDomainModule(cfg)
         self.fd = FrequencyDomainAnalyzer(cfg)
         self.tf = TimeFrequencyAnalyzer(cfg)
+        self.fft = FFTAnalyzer(cfg)
 
     def run(
         self,
@@ -77,6 +78,28 @@ class EDAEngine:
         qc = self.td.qc(raw_after) if qc_enabled else {}
         if qc_enabled and save_csv:
             out["qc_json"] = self.writer.write_json(f"{recording_id}/qc.json", qc)
+
+        # --- Explicit FFT (single-window) optional
+        fft_res = self.fft.compute(raw_after)
+        if fft_res is not None:
+            if bool(get(self.cfg, "analysis.frequency_domain.fft.save_csv", True)) and save_csv:
+                rows = [(float(f), float(a), float(p)) for f, a, p in zip(fft_res.freqs, fft_res.amp, fft_res.power)]
+                out["fft_csv"] = self.writer.write_csv_rows(
+                    f"{recording_id}/fft_{fft_res.channel}_t{fft_res.tmin:.1f}-{fft_res.tmax:.1f}.csv",
+                    header=["freq_hz", "amplitude", "power"],
+                    rows=rows,
+                )
+
+            if bool(get(self.cfg, "analysis.frequency_domain.fft.save_plot", True)) and save_plots:
+                out["fft_plot"] = self.writer.save_line_plot(
+                    f"{recording_id}/fft_{fft_res.channel}_power.png",
+                    fft_res.freqs,
+                    fft_res.power,
+                    title=f"{recording_id} FFT Power ({fft_res.channel}) [{fft_res.tmin:.1f}-{fft_res.tmax:.1f}s]",
+                    xlabel="Frequency (Hz)",
+                    ylabel="Power (a.u.)",
+                )
+
 
         # --- PSD + bandpower
         psd_enabled = bool(get(self.cfg, "analysis.frequency_domain.psd.enabled", True))
@@ -148,15 +171,33 @@ class EDAEngine:
                 )
 
             if bool(get(self.cfg, "eda.plot_epochs", False)) and save_plots and len(epochs2) > 0:
-                fig = epochs2.plot(
+                figs = epochs2.plot(
                     n_epochs=min(5, len(epochs2)),
-                    n_channels=len(epochs2.ch_names),  # <- no cap
+                    n_channels=len(epochs2.ch_names),
                     show=False,
                 )
-                p = (self.writer.root / f"{recording_id}/epochs.png")
-                p.parent.mkdir(parents=True, exist_ok=True)
-                fig.savefig(p, dpi=150, bbox_inches="tight")
-                out["epochs_plot"] = str(p)
+
+                # MNE can return a Figure OR a list of Figures depending on version/settings
+                if isinstance(figs, list):
+                    fig0 = figs[0] if len(figs) > 0 else None
+                else:
+                    fig0 = figs
+
+                if fig0 is not None:
+                    p = (self.writer.root / f"{recording_id}/epochs.png")
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    fig0.savefig(p, dpi=150, bbox_inches="tight")
+                    out["epochs_plot"] = str(p)
+
+                    # Close all opened figs to avoid memory leak
+                    try:
+                        if isinstance(figs, list):
+                            for f in figs:
+                                plt.close(f)
+                        else:
+                            plt.close(figs)
+                    except Exception:
+                        pass
 
         # --- STFT spectrogram
         tf_enabled = bool(get(self.cfg, "analysis.time_frequency.enabled", False))
@@ -192,11 +233,24 @@ class EDAEngine:
             if epochs is None:
                 epochs = self.td.make_epochs(raw_after)
             if epochs is not None and len(epochs) > 0:
-                power = self.tf.morlet_tfr(epochs)
-                fig = power.plot(show=False)
-                p = (self.writer.root / f"{recording_id}/tfr_morlet.png")
-                p.parent.mkdir(parents=True, exist_ok=True)
-                fig.savefig(p, dpi=150, bbox_inches="tight")
-                out["tfr_plot"] = str(p)
+                if len(epochs.ch_names) > 0 and epochs.get_data().shape[-1] >= 64:
+                    power = self.tf.morlet_tfr(epochs)
+                    figs = power.plot(show=False)
+
+                    fig0 = figs[0] if isinstance(figs, list) and len(figs) > 0 else figs
+                    if fig0 is not None:
+                        p = (self.writer.root / f"{recording_id}/tfr_morlet.png")
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        fig0.savefig(p, dpi=150, bbox_inches="tight")
+                        out["tfr_plot"] = str(p)
+
+                        try:
+                            if isinstance(figs, list):
+                                for f in figs:
+                                    plt.close(f)
+                            else:
+                                plt.close(figs)
+                        except Exception:
+                            pass
 
         return out

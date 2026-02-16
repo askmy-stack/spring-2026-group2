@@ -1,0 +1,5 @@
+{
+  "Name": "EEG Dataset",
+  "BIDSVersion": "1.8.0",
+  "DatasetType": "raw"
+}
