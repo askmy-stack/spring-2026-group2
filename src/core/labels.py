@@ -68,7 +68,7 @@ def _exclude_near_seizure_negatives(
         start = float(row["start_sec"])
         end = float(row["end_sec"])
         near = any(
-            abs(start - s) <= exclude_sec or abs(end - e) <= exclude_sec
+            start < e + exclude_sec and end > s - exclude_sec
             for s, e in intervals
         )
         mask_keep.append(not near)
@@ -81,7 +81,26 @@ def _assign_multiclass(
     cfg: Dict[str, Any],
 ) -> pd.DataFrame:
     type_map = cfg.get("labeling", {}).get("seizure_types", {})
-    df["label"] = df["label"].apply(lambda x: type_map.get("unknown", 1) if x == 1 else 0)
+    background_label = type_map.get("background", 0)
+    default_seizure_label = type_map.get("unknown", 1)
+
+    new_labels = []
+    for _, row in df.iterrows():
+        if row["label"] == 0:
+            new_labels.append(background_label)
+            continue
+        start = float(row["start_sec"])
+        end = float(row["end_sec"])
+        best_overlap = 0.0
+        best_label = default_seizure_label
+        for i, (s, e) in enumerate(intervals):
+            o = min(end, e) - max(start, s)
+            if o > best_overlap:
+                best_overlap = o
+                best_label = default_seizure_label
+        new_labels.append(best_label)
+    df = df.copy()
+    df["label"] = new_labels
     return df
 
 

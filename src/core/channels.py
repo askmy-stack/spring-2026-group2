@@ -87,13 +87,18 @@ def _reduce_to_target(raw: mne.io.BaseRaw, standard: List[str], ch_cfg: Dict) ->
     return raw
 
 
+_POSITIONS_UPPER = {k.upper(): v for k, v in POSITIONS_1020.items()}
+
+
 def _nearest_channel(target_pos: np.ndarray, candidates: List[str], all_ch: List[str]) -> str:
+    if not candidates:
+        return all_ch[0] if all_ch else ""
     best = candidates[0]
     best_dist = float("inf")
     for ch in candidates:
         ch_upper = ch.upper()
-        if ch_upper in POSITIONS_1020:
-            dist = float(np.linalg.norm(POSITIONS_1020[ch_upper] - target_pos))
+        if ch_upper in _POSITIONS_UPPER:
+            dist = float(np.linalg.norm(_POSITIONS_UPPER[ch_upper] - target_pos))
             if dist < best_dist:
                 best_dist = dist
                 best = ch
@@ -123,10 +128,13 @@ def _expand_to_target(raw: mne.io.BaseRaw, standard: List[str], target: int) -> 
 
 def _ensure_exactly(raw: mne.io.BaseRaw, standard: List[str], target: int) -> mne.io.BaseRaw:
     ch_names = list(raw.ch_names)
-    if len(ch_names) >= target:
+    n = len(ch_names)
+    if n > target:
         raw.pick(ch_names[:target])
-        rename_map = {old: new for old, new in zip(raw.ch_names, standard)}
-        raw.rename_channels(rename_map)
+    elif n < target:
+        raw = _expand_to_target(raw, standard, target)
+    rename_map = {old: new for old, new in zip(list(raw.ch_names)[:target], standard[:target])}
+    raw.rename_channels(rename_map)
     return raw
 
 

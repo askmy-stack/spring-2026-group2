@@ -56,8 +56,6 @@ split:
   val: 0.15
   test: 0.15
   seed: 42
-  enforce_stratification: true
-  age_bins: [0, 5, 10, 15, 20, 30, 100]
 
 stratification:
   enable: true

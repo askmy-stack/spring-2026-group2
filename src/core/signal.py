@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from typing import Dict, Any
 
 import mne
@@ -20,6 +21,11 @@ def preprocess(raw: mne.io.BaseRaw, cfg: Dict[str, Any]) -> mne.io.BaseRaw:
 def _pick_eeg(raw: mne.io.BaseRaw) -> mne.io.BaseRaw:
     picks = mne.pick_types(raw.info, eeg=True, exclude=[])
     if len(picks) == 0:
+        warnings.warn(
+            f"No EEG channels detected in {len(raw.ch_names)} channels. "
+            f"All channels will be treated as EEG: {raw.ch_names}",
+            stacklevel=2,
+        )
         picks = list(range(len(raw.ch_names)))
     raw.pick(picks)
     raw.set_channel_types({ch: "eeg" for ch in raw.ch_names})

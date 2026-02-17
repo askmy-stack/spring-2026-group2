@@ -13,7 +13,7 @@ def stratify_subjects(
     strat_cfg = cfg.get("stratification", {})
     split_cfg = cfg.get("split", {})
 
-    age_bins = strat_cfg.get("age_bins", [0, 10, 20, 30, 100])
+    age_bins = strat_cfg.get("age_bins", [0, 5, 10, 15, 20, 30, 100])
     age_labels = strat_cfg.get("age_bin_labels", None)
     train_r = float(split_cfg.get("train", 0.70))
     val_r = float(split_cfg.get("val", 0.15))

@@ -58,4 +58,11 @@ def add_noise(signal: np.ndarray, snr_db: float = 25) -> np.ndarray:
 
 def time_shift(signal: np.ndarray, max_samples: int = 15) -> np.ndarray:
     shift = np.random.randint(-max_samples, max_samples + 1)
-    return np.roll(signal, shift, axis=1)
+    if shift == 0:
+        return signal
+    result = np.zeros_like(signal)
+    if shift > 0:
+        result[:, shift:] = signal[:, :-shift]
+    else:
+        result[:, :shift] = signal[:, -shift:]
+    return result

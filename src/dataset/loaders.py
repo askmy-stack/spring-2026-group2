@@ -73,7 +73,7 @@ class CachedEEGLoader(BaseEEGDataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         row = self.data_index.iloc[idx]
         label = int(row["label"])
-        cache_key = make_cache_key(row["path"], row["start_sec"], row["end_sec"])
+        cache_key = make_cache_key(self.mode, row["path"], row["start_sec"], row["end_sec"])
 
         tensor_cached = self.cacher.get(cache_key, ns="tensor")
         if tensor_cached is not None:

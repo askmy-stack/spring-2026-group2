@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import pickle
+import threading
 import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -61,6 +62,7 @@ class PickleCacher(BaseCacher):
         self.memory_limit_bytes = memory_limit_mb * 1024 * 1024
         self._mem: OrderedDict[str, Any] = OrderedDict()
         self._mem_usage = 0
+        self._lock = threading.Lock()
         self.stats = CacheStats()
 
     def _disk_path(self, key: str, ns: str) -> Path:
@@ -84,25 +86,28 @@ class PickleCacher(BaseCacher):
         t0 = time.time()
         mkey = self._mem_key(key, ns)
 
-        if mkey in self._mem:
-            self._mem.move_to_end(mkey)
-            self.stats.hits += 1
-            self.stats.cached_load_time += time.time() - t0
-            return self._mem[mkey]
+        with self._lock:
+            if mkey in self._mem:
+                self._mem.move_to_end(mkey)
+                self.stats.hits += 1
+                self.stats.cached_load_time += time.time() - t0
+                return self._mem[mkey]
 
         disk = self._disk_path(key, ns)
         if disk.exists():
             try:
                 with open(disk, "rb") as f:
                     obj = pickle.load(f)
-                self._mem_add(mkey, obj)
-                self.stats.hits += 1
-                self.stats.cached_load_time += time.time() - t0
+                with self._lock:
+                    self._mem_add(mkey, obj)
+                    self.stats.hits += 1
+                    self.stats.cached_load_time += time.time() - t0
                 return obj
             except Exception:
                 disk.unlink(missing_ok=True)
 
-        self.stats.misses += 1
+        with self._lock:
+            self.stats.misses += 1
         return None
 
     def put(self, key: str, value: Any, ns: str = "default"):
@@ -113,10 +118,13 @@ class PickleCacher(BaseCacher):
         except Exception:
             return
         mkey = self._mem_key(key, ns)
-        self._mem_add(mkey, value)
+        with self._lock:
+            self._mem_add(mkey, value)
 
     def _mem_add(self, mkey: str, obj: Any):
         size = self._obj_size(obj)
+        if size > self.memory_limit_bytes:
+            return
         while self._mem_usage + size > self.memory_limit_bytes and self._mem:
             _, evicted = self._mem.popitem(last=False)
             self._mem_usage -= self._obj_size(evicted)
