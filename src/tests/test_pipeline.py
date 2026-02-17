@@ -13,7 +13,7 @@ from core.signal import preprocess, normalize_signal
 from core.channels import standardize_channels, STANDARD_16
 from core.cache import PickleCacher, make_cache_key
 from core.labels import build_window_index, balance_index, extract_seizure_intervals
-from core.stratify import stratify_subjects
+from core.stratify import stratify_subjects, assign_split_column
 from core.augment import augment, time_warp, magnitude_scale, add_noise, time_shift
 from core.bids import convert_to_bids, load_participants
 from dataset.factory import create_loader
@@ -178,12 +178,105 @@ def test_stratify_subjects():
         for i in range(10)
     ])
     train, val, test = stratify_subjects(subjects, cfg)
+
+    train_ids = set(train["subject_id"])
+    val_ids = set(val["subject_id"])
+    test_ids = set(test["subject_id"])
+
+    all_ids = train_ids | val_ids | test_ids
+    assert all_ids == set(subjects["subject_id"]), "Some subjects lost during stratification"
+
+    assert len(train_ids & val_ids) == 0, "Train/val overlap detected"
+    assert len(train_ids & test_ids) == 0, "Train/test overlap detected"
+    assert len(val_ids & test_ids) == 0, "Val/test overlap detected"
+
+    assert len(train_ids) > 0, "Train set is empty"
+    assert len(val_ids) > 0, "Val set is empty"
+    assert len(test_ids) > 0, "Test set is empty"
+
+
+def test_stratify_subjects_small_cohort():
+    """Reproduce the 6-subject CHB-MIT scenario that previously gave empty val."""
+    cfg = _load_cfg()
+    subjects = pd.DataFrame([
+        {"subject_id": "chb01", "age": 11, "sex": "F"},
+        {"subject_id": "chb02", "age": 11, "sex": "M"},
+        {"subject_id": "chb03", "age": 14, "sex": "F"},
+        {"subject_id": "chb05", "age": 7,  "sex": "F"},
+        {"subject_id": "chb08", "age": 3,  "sex": "M"},
+        {"subject_id": "chb10", "age": 3,  "sex": "M"},
+    ])
+    train, val, test = stratify_subjects(subjects, cfg)
+
+    train_ids = set(train["subject_id"])
+    val_ids = set(val["subject_id"])
+    test_ids = set(test["subject_id"])
+
+    assert train_ids | val_ids | test_ids == set(subjects["subject_id"])
+
+    assert len(train_ids & val_ids) == 0
+    assert len(train_ids & test_ids) == 0
+    assert len(val_ids & test_ids) == 0
+
+    assert len(val_ids) >= 1, f"Val set is empty! train={train_ids}, val={val_ids}, test={test_ids}"
+    assert len(test_ids) >= 1, f"Test set is empty! train={train_ids}, val={val_ids}, test={test_ids}"
+    assert len(train_ids) >= len(val_ids)
+    assert len(train_ids) >= len(test_ids)
+
+
+def test_stratify_subjects_minimum():
+    """With exactly 3 subjects, each split must get exactly 1."""
+    cfg = _load_cfg()
+    subjects = pd.DataFrame([
+        {"subject_id": "s1", "age": 5,  "sex": "M"},
+        {"subject_id": "s2", "age": 15, "sex": "F"},
+        {"subject_id": "s3", "age": 25, "sex": "M"},
+    ])
+    train, val, test = stratify_subjects(subjects, cfg)
+
+    assert len(train) == 1
+    assert len(val) == 1
+    assert len(test) == 1
+
     all_ids = set(train["subject_id"]) | set(val["subject_id"]) | set(test["subject_id"])
-    assert all_ids == set(subjects["subject_id"])
-    overlap_tv = set(train["subject_id"]) & set(val["subject_id"])
-    overlap_ts = set(train["subject_id"]) & set(test["subject_id"])
-    assert len(overlap_tv) == 0
-    assert len(overlap_ts) == 0
+    assert all_ids == {"s1", "s2", "s3"}
+
+
+def test_no_window_level_leakage():
+    """Verify that assign_split_column never puts the same subject in multiple splits."""
+    rows = []
+    for sid in ["s1", "s2", "s3"]:
+        for i in range(5):
+            rows.append({"subject_id": sid, "start_sec": i, "end_sec": i + 1,
+                         "label": 0, "path": "fake.edf"})
+    windows_df = pd.DataFrame(rows)
+
+    result = assign_split_column(windows_df, ["s1"], ["s2"], ["s3"])
+
+    for sid in ["s1", "s2", "s3"]:
+        splits_for_subject = result[result["subject_id"] == sid]["split"].unique()
+        assert len(splits_for_subject) == 1, (
+            f"Subject {sid} appears in multiple splits: {splits_for_subject}"
+        )
+
+    assert (result[result["subject_id"] == "s1"]["split"] == "train").all()
+    assert (result[result["subject_id"] == "s2"]["split"] == "val").all()
+    assert (result[result["subject_id"] == "s3"]["split"] == "test").all()
+
+
+def test_assign_split_column_unmapped_raises():
+    """Verify that unmapped subject IDs raise ValueError instead of silently defaulting."""
+    rows = [
+        {"subject_id": "s1", "start_sec": 0, "end_sec": 1, "label": 0, "path": "f.edf"},
+        {"subject_id": "s_unknown", "start_sec": 0, "end_sec": 1, "label": 0, "path": "f.edf"},
+    ]
+    windows_df = pd.DataFrame(rows)
+
+    try:
+        assign_split_column(windows_df, ["s1"], [], [])
+        assert False, "Should have raised ValueError for unmapped subject 's_unknown'"
+    except ValueError:
+        pass
 
 
 def test_bids_conversion():
@@ -248,6 +341,10 @@ def run_all():
         test_build_window_index,
         test_balance_index,
         test_stratify_subjects,
+        test_stratify_subjects_small_cohort,
+        test_stratify_subjects_minimum,
+        test_no_window_level_leakage,
+        test_assign_split_column_unmapped_raises,
         test_bids_conversion,
         test_loader_class_hierarchy,
         test_loader_empty,

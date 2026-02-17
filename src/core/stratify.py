@@ -17,6 +17,7 @@ def stratify_subjects(
     age_labels = strat_cfg.get("age_bin_labels", None)
     train_r = float(split_cfg.get("train", 0.70))
     val_r = float(split_cfg.get("val", 0.15))
+    test_r = float(split_cfg.get("test", 0.15))
     seed = int(split_cfg.get("seed", 42))
 
     df = subjects_df.copy()
@@ -25,28 +26,56 @@ def stratify_subjects(
 
     df["stratum"] = df["age_bin"].astype(str) + "_" + df["sex_norm"].astype(str)
 
-    train_ids, val_ids, test_ids = [], [], []
+    N = len(df)
+    if N < 3:
+        return df.copy(), df.iloc[0:0].copy(), df.iloc[0:0].copy()
 
-    for stratum, group in df.groupby("stratum"):
-        ids = group["subject_id"].tolist()
-        rng = np.random.default_rng(seed)
-        rng.shuffle(ids)
-        n = len(ids)
-        n_train = max(1, int(n * train_r))
-        n_val = max(1, int(n * val_r))
-        n_test = max(1, n - n_train - n_val)
+    rng = np.random.default_rng(seed)
 
-        if n == 1:
-            train_ids.extend(ids)
-            continue
-        if n == 2:
-            train_ids.append(ids[0])
-            test_ids.append(ids[1])
-            continue
+    records = (
+        df[["subject_id", "stratum"]]
+        .sort_values(["stratum", "subject_id"])
+        .to_dict("records")
+    )
+    rng.shuffle(records)
 
-        train_ids.extend(ids[:n_train])
-        val_ids.extend(ids[n_train:n_train + n_val])
-        test_ids.extend(ids[n_train + n_val:])
+    n_test = max(1, round(N * test_r))
+    n_val = max(1, round(N * val_r))
+    n_train = N - n_val - n_test
+    if n_train < 1:
+        n_train = 1
+        leftover = N - 1
+        n_val = max(1, leftover // 2)
+        n_test = leftover - n_val
+
+    targets = {"train": n_train, "val": n_val, "test": n_test}
+    counts = {"train": 0, "val": 0, "test": 0}
+    stratum_counts: Dict[str, Dict[str, int]] = {}
+    assignments: Dict[str, str] = {}
+
+    for rec in records:
+        sid = rec["subject_id"]
+        strat = rec["stratum"]
+
+        if strat not in stratum_counts:
+            stratum_counts[strat] = {"train": 0, "val": 0, "test": 0}
+
+        candidates = [s for s in ["train", "val", "test"] if counts[s] < targets[s]]
+        if not candidates:
+            candidates = ["train"]
+
+        best = min(
+            candidates,
+            key=lambda s: (stratum_counts[strat][s], counts[s] - targets[s]),
+        )
+
+        assignments[sid] = best
+        counts[best] += 1
+        stratum_counts[strat][best] += 1
+
+    train_ids = [sid for sid, sp in assignments.items() if sp == "train"]
+    val_ids = [sid for sid, sp in assignments.items() if sp == "val"]
+    test_ids = [sid for sid, sp in assignments.items() if sp == "test"]
 
     train_df = df[df["subject_id"].isin(set(train_ids))].copy()
     val_df = df[df["subject_id"].isin(set(val_ids))].copy()
@@ -108,5 +137,13 @@ def assign_split_column(
         id_to_split[sid] = "val"
     for sid in test_ids:
         id_to_split[sid] = "test"
-    df["split"] = df["subject_id"].map(id_to_split).fillna("train")
+    mapped = df["subject_id"].map(id_to_split)
+    unmapped = mapped.isna()
+    if unmapped.any():
+        unmapped_ids = df.loc[unmapped, "subject_id"].unique().tolist()
+        raise ValueError(
+            f"assign_split_column: {len(unmapped_ids)} subject(s) not found in any "
+            f"split list: {unmapped_ids}. This indicates a data integrity issue."
+        )
+    df["split"] = mapped
     return df
