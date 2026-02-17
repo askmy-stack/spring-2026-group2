@@ -1,13 +1,41 @@
 # EEG Seizure Detection Dataloader
 
-## Core Files (4 Files Only)
+A modular EEG data pipeline for seizure detection, supporting ingestion, BIDS conversion, windowing, balancing, stratified splitting, caching, augmentation, and PyTorch dataloader creation.
+
+## Repository Structure
 
 ```
-project/
-├── dataloader.py     # Main dataloader with all functionality
-├── main.py           # CLI interface for operations
-├── verify.py         # Test suite
-└── config.yaml       # Configuration
+spring-2026-group2/
+├── README.md
+├── .gitignore
+└── src/
+    ├── main.py               # CLI menu interface
+    ├── verify.py             # Test runner (calls src/tests/test_pipeline.py)
+    ├── config.yaml           # All pipeline configuration
+    ├── core/
+    │   ├── io.py             # EDF reading, directory scanning, sample download
+    │   ├── signal.py         # Preprocessing (bandpass, notch, resample, normalize)
+    │   ├── channels.py       # Channel standardization to 16-channel 10-20 set
+    │   ├── labels.py         # Window indexing, seizure labeling, dataset balancing
+    │   ├── stratify.py       # Subject-independent stratified train/val/test split
+    │   ├── augment.py        # Data augmentation (time warp, magnitude scale, noise, shift)
+    │   ├── bids.py           # BIDS conversion and participants.tsv management
+    │   ├── cache.py          # Pickle-based disk/memory cache with hit/miss stats
+    │   └── download.py       # Dataset download utilities
+    ├── pipeline/
+    │   └── ingest.py         # Full pipeline orchestration (run_pipeline, run_chbmit_pipeline)
+    ├── dataset/
+    │   ├── base.py           # BaseEEGDataset (abstract PyTorch Dataset)
+    │   ├── loaders.py        # StandardEEGLoader, CachedEEGLoader, ParallelEEGLoader, EnhancedEEGLoader
+    │   └── factory.py        # create_loader() and create_pytorch_dataloaders() factory functions
+    ├── tests/
+    │   └── test_pipeline.py  # 19 unit tests covering all core modules
+    └── results/
+        ├── bids_dataset/     # BIDS-formatted output (sub-*/eeg/*)
+        └── dataloader/
+            ├── window_index_train.csv
+            ├── window_index_val.csv
+            └── window_index_test.csv
 ```
 
 ## Quick Start
@@ -15,166 +43,90 @@ project/
 ### 1. Install Dependencies
 
 ```bash
-pip install torch numpy pandas scipy mne mne-bids PyYAML
+pip install torch numpy pandas scipy mne mne-bids PyYAML dask
 ```
 
 ### 2. Configure Paths
 
-Edit `config.yaml`:
+Edit `src/config.yaml`:
 ```yaml
 dataset:
-  raw_root: "path/to/your/raw/eeg/data"
+  raw_root: "../data/raw"
   results_root: "results"
 ```
 
 ### 3. Run Pipeline
 
 ```bash
+cd src
 python main.py
-# Select option 1: Run Full Pipeline
+# Select option 1: Run full pipeline (ingest -> BIDS -> index)
 ```
 
-### 4. Check Balance
+### 4. Run Tests
 
 ```bash
-python main.py
-# Select option 4: Show Dataset Statistics
-```
-
-### 5. Verify System
-
-```bash
+cd src
 python verify.py
 ```
 
-All tests should pass.
-
-## Testing with Other EEG Datasets
-
-### Available Public Datasets
-
-#### 1. CHB-MIT Scalp EEG Database (PhysioNet)
-- **Link**: https://physionet.org/content/chbmit/1.0.0/
-- **Description**: 24 pediatric subjects, 916 hours of EEG, 198 seizures
-- **Format**: EDF
-- **Channels**: 23 channels (standardized to 16 by our loader)
-- **Sampling Rate**: 256 Hz
-
-**Download:**
-```bash
-wget -r -N -c -np https://physionet.org/files/chbmit/1.0.0/
-```
-
-**Configure:**
-```yaml
-dataset:
-  raw_root: "chbmit/1.0.0"
-```
-
-#### 2. TUH EEG Seizure Corpus
-- **Link**: https://isip.piconepress.com/projects/tuh_eeg/html/downloads.shtml
-- **Description**: Largest publicly available seizure corpus
-- **Format**: EDF
-- **Note**: Requires registration
-
-**After download, configure:**
-```yaml
-dataset:
-  raw_root: "tuh_eeg_seizure/v2.0.0/edf"
-```
-
-#### 3. Siena Scalp EEG Database
-- **Link**: https://physionet.org/content/siena-scalp-eeg/1.0.0/
-- **Description**: 14 subjects with absence seizures
-- **Format**: EDF
-- **Channels**: 29 channels (standardized to 16)
-
-**Download:**
-```bash
-wget -r -N -c -np https://physionet.org/files/siena-scalp-eeg/1.0.0/
-```
-
-#### 4. OpenNeuro EEG Datasets
-- **Link**: https://openneuro.org
-- **Search**: Filter by "EEG" modality
-- **Format**: BIDS-compliant
-- **Examples**:
-  - ds003190: EEG data (TUH subset)
-  - ds002778: Motor imagery
-  - ds003645: Epilepsy recordings
-
-**Download (using AWS CLI):**
-```bash
-pip install awscli
-aws s3 sync --no-sign-request s3://openneuro.org/ds003190 data/raw/ds003190/
-```
-
-### Using Downloaded Datasets
-
-#### Step 1: Place Data
-```bash
-# Your directory structure:
-data/raw/your_dataset/
-├── sub-01/
-│   └── eeg/
-│       └── sub-01_task-rest_eeg.edf
-├── sub-02/
-└── ...
-```
-
-#### Step 2: Update Config
-```yaml
-dataset:
-  raw_root: "data/raw/your_dataset"
-  results_root: "results"
-```
-
-Update config:
-```yaml
-dataset:
-  raw_root: "data/raw/your_dataset"
-```
-
-#### Step 4: Run Pipeline
-```bash
-python main.py
-# Select option 1: Run Full Pipeline
-```
-
-#### Step 5: Verify
-```bash
-python main.py
-# Select option 4: Show Dataset Statistics
-```
-
-### Expected Output Format
-
-All datasets will be standardized to:
-- 16 channels (standard 10-20 system)
-- 256 Hz sampling rate
-- 1-second windows
-- Binary labels (0=background, 1=seizure)
+All 19 tests should pass.
 
 ## Main Menu Options
 
 ```
-1. Run Full Pipeline    - Process raw EEG data
-2. Generate BIDS Report - Validate BIDS structure
-3. Quick Verification   - Test data integrity
-4. Show Statistics      - View dataset distribution
-5. Export Metadata      - Save dataset info
-6. Clear Cache          - Remove cached data
+1. Run full pipeline (ingest -> BIDS -> index)   - Process raw EEG data end-to-end
+2. Download sample EDF and run pipeline          - Download a sample EDF and process it
+3. Show dataset statistics                       - View window counts and label distribution
+4. Get PyTorch DataLoaders                       - Create train/val/test DataLoaders
+5. Benchmark cache performance                   - Measure cache speedup
+6. Clear cache                                   - Remove cached data
+7. Download CHB-MIT seizure dataset and run pipeline
+0. Exit
 ```
+
+## Test Suite
+
+Tests are in `src/tests/test_pipeline.py` and run via `src/verify.py`.
+
+| Test | Description |
+|------|-------------|
+| `test_download_sample_edf` | Downloads a sample EDF file |
+| `test_read_raw` | Reads an EDF file with MNE |
+| `test_preprocess` | Bandpass filter + resample to target sfreq |
+| `test_channel_standardization_reduce` | Reduces channels to standard 16 |
+| `test_channel_standardization_expand` | Expands sparse channels to 16 via interpolation |
+| `test_normalize_signal` | Z-score normalization of EEG signal |
+| `test_augmentation` | Full augmentation pipeline on a window |
+| `test_augmentation_functions` | Individual augmentation functions (warp, scale, noise, shift) |
+| `test_cache_put_get` | Cache write and read |
+| `test_cache_miss` | Cache miss returns None |
+| `test_cache_stats` | Hit/miss counters |
+| `test_build_window_index` | Window index creation with and without seizure intervals |
+| `test_balance_index` | Oversampling minority class to target seizure ratio |
+| `test_stratify_subjects` | Subject-independent split with no overlap between splits |
+| `test_bids_conversion` | EDF -> BIDS format conversion |
+| `test_loader_class_hierarchy` | All loaders are subclasses of BaseEEGDataset |
+| `test_loader_empty` | create_loader() returns correct loader type |
+| `test_loader_shape` | Loaded tensor shape matches config (channels x window_samples) |
+| `test_class_weights` | get_class_weights() returns a 2-element tensor |
 
 ## Configuration
 
-Key settings in `config.yaml`:
+Key settings in `src/config.yaml`:
 
 ```yaml
 signal:
-  target_sfreq: 256
-  bandpass: [1.0, 50.0]
-  notch: 60.0
+  target_sfreq: 256          # Resample to 256 Hz
+  bandpass: [1.0, 50.0]      # Bandpass filter
+  notch: 60.0                # Notch filter (60 Hz)
+  reference: "average"       # Average reference
+
+channels:
+  target_count: 16
+  policy: "spatial_selection"
+  standard_set: ["Fp1","Fp2","F3","F4","F7","F8","Fz","Cz",
+                 "T7","T8","P7","P8","C3","C4","O1","O2"]
 
 windowing:
   window_sec: 1.0
@@ -183,46 +135,99 @@ windowing:
 balance:
   enable: true
   seizure_ratio: 0.3
+  method: "oversample"
 
 split:
+  policy: "subject_independent"
   train: 0.70
   val: 0.15
   test: 0.15
+
+caching:
+  enable: true
+  max_memory_mb: 4096
+
+pytorch:
+  batch_size: 32
+  num_workers: 4
+
+augmentation:
+  enable: true
+  train_only: true
+  seizure_prob: 0.8
+  background_prob: 0.3
 ```
 
-## Troubleshooting
+## Loader Types
 
-### No Data Found
-```bash
-# Check paths in config.yaml
-# Ensure raw data exists
-python main.py  # Run option 1
-```
+| Type | Class | Description |
+|------|-------|-------------|
+| `standard` | `StandardEEGLoader` | Basic window-based loader |
+| `cached` | `CachedEEGLoader` | Disk/memory cache for fast repeated access |
+| `parallel` | `ParallelEEGLoader` | Multi-worker parallel loading |
+| `enhanced` | `EnhancedEEGLoader` | Cache + augmentation + class weights |
 
-### Imbalanced Splits
+## API Usage
+
 ```python
-from dataloader import create_loader
-loader = create_loader('enhanced', mode='train')
-loader.check_balance()
-loader.rebalance_splits()  # If needed
+from dataset.factory import create_loader, create_pytorch_dataloaders
+
+# Single loader
+loader = create_loader("enhanced", config_path="config.yaml", mode="train", augment_data=True)
+data, label = loader[0]  # torch.Tensor (16, 256), torch.Tensor scalar
+
+# Class weights for weighted loss
+weights = loader.get_class_weights()  # torch.Tensor([w_neg, w_pos])
+
+# PyTorch DataLoaders (train/val/test)
+train_dl, val_dl, test_dl = create_pytorch_dataloaders(
+    config_path="config.yaml",
+    loader_type="enhanced",
+    augment_train=True,
+)
 ```
 
-### Out of Memory
-```python
-# Reduce cache size
-loader = create_loader('cached', mode='train', cache_memory_mb=500)
-```
+## Compatible Datasets
 
-### Tests Failing
+### CHB-MIT Scalp EEG (PhysioNet)
+- **Link**: https://physionet.org/content/chbmit/1.0.0/
+- 24 pediatric subjects, 916 hours, 198 seizures, EDF format
+
 ```bash
-# Reinstall dependencies
-pip install -r requirements.txt --upgrade
+wget -r -N -c -np https://physionet.org/files/chbmit/1.0.0/
+```
 
-# Run pipeline first
-python main.py  # Option 1
+### TUH EEG Seizure Corpus
+- **Link**: https://isip.piconepress.com/projects/tuh_eeg/html/downloads.shtml
+- Largest public seizure corpus, requires registration
 
-# Then test
-python verify.py
+### Siena Scalp EEG (PhysioNet)
+- **Link**: https://physionet.org/content/siena-scalp-eeg/1.0.0/
+- 14 subjects, absence seizures, 29 channels standardized to 16
+
+### OpenNeuro EEG (BIDS format)
+- **Link**: https://openneuro.org — filter by EEG modality
+
+## Output
+
+After running the pipeline, all datasets are standardized to:
+- **16 channels** (standard 10-20 system)
+- **256 Hz** sampling rate
+- **1-second windows**
+- **Binary labels**: 0 = background, 1 = seizure
+
+```
+src/results/
+├── bids_dataset/
+│   └── sub-<id>/eeg/
+│       ├── sub-<id>_task-eeg_run-01_eeg.edf
+│       ├── sub-<id>_task-eeg_run-01_eeg.json
+│       ├── sub-<id>_task-eeg_run-01_eeg_channels.tsv
+│       └── sub-<id>_task-eeg_run-01_eeg_events.tsv
+└── dataloader/
+    ├── window_index_train.csv
+    ├── window_index_val.csv
+    └── window_index_test.csv
 ```
 
 ## Requirements
@@ -236,71 +241,15 @@ scipy >= 1.7
 mne >= 1.0
 mne-bids >= 0.10
 PyYAML >= 5.4
+dask (optional, for parallel caching)
 ```
 
-## Output Structure
+## Troubleshooting
 
-After running pipeline:
+**No data found**: Verify `raw_root` in `config.yaml` points to a directory containing `.edf` files.
 
-```
-results/
-├── bids_dataset/           # BIDS-formatted data
-│   ├── sub-01/
-│   ├── sub-02/
-│   └── ...
-└── dataloader/
-    ├── window_index_train.csv
-    ├── window_index_val.csv
-    ├── window_index_test.csv
-    └── cache/              # Cached data
-```
+**Tests failing**: Run the pipeline first (option 1 or 2 in `main.py`) to populate `results/`, then re-run tests.
 
-## Example Datasets and Expected Results
+**Out of memory**: Reduce `caching.max_memory_mb` in `config.yaml`.
 
-### CHB-MIT (24 subjects)
-```
-Expected output:
-- Train: ~150K windows, 20-30% seizures
-- Val: ~40K windows, 20-30% seizures
-- Test: ~30K windows, 20-30% seizures
-```
-
-### TUH EEG (Larger corpus)
-```
-Expected output:
-- Train: ~500K+ windows, 15-25% seizures
-- Val: ~100K+ windows, 15-25% seizures
-- Test: ~100K+ windows, 15-25% seizures
-```
-
-### Siena (14 subjects, absence seizures)
-```
-Expected output:
-- Train: ~50K windows, 10-20% seizures
-- Val: ~15K windows, 10-20% seizures
-- Test: ~15K windows, 10-20% seizures
-```
-
-## Quick Reference
-
-```python
-# Import
-from dataloader import create_loader
-
-# Load data
-train = create_loader('enhanced', mode='train', augment=True)
-
-# Check balance
-balance_info = train.check_balance()
-
-# Fix if needed
-if balance_info['needs_rebalancing']:
-    train.rebalance_splits()
-
-# Get weights
-weights = train.get_class_weights()
-
-# Use in training
-from torch.utils.data import DataLoader
-loader = DataLoader(train, batch_size=64, shuffle=True)
-```
+**Imbalanced splits**: The pipeline automatically oversamples the seizure class to `balance.seizure_ratio = 0.3`. Adjust in `config.yaml` if needed.
