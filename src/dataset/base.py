@@ -76,15 +76,42 @@ class BaseEEGDataset(Dataset, ABC):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         pass
 
+    # ── EDA helpers ──────────────────────────────────────────────
+
+    def get_data_index(self) -> pd.DataFrame:
+        """Return the full window-index DataFrame for EDA."""
+        return self.data_index
+
+    def get_labels(self) -> np.ndarray:
+        """Return all labels as a numpy array."""
+        if self.data_index.empty or "label" not in self.data_index.columns:
+            return np.array([], dtype=int)
+        return self.data_index["label"].values.astype(int)
+
+    def get_subject_ids(self) -> np.ndarray:
+        """Return all subject IDs as a numpy array."""
+        if self.data_index.empty or "subject_id" not in self.data_index.columns:
+            return np.array([], dtype=str)
+        return self.data_index["subject_id"].values
+
+    # ── Class / label properties ──────────────────────────────
+
+    @property
+    def num_classes(self) -> int:
+        if self.data_index.empty or "label" not in self.data_index.columns:
+            return 2
+        return int(self.data_index["label"].nunique())
+
     def get_class_weights(self) -> torch.Tensor:
         if self.data_index.empty or "label" not in self.data_index.columns:
             return torch.tensor([1.0, 1.0])
         counts = self.data_index["label"].value_counts().sort_index()
-        if len(counts) < 2:
-            return torch.tensor([1.0, 1.0])
+        n_classes = len(counts)
+        if n_classes < 2:
+            return torch.ones(1, dtype=torch.float32)
         total = len(self.data_index)
-        w = total / (len(counts) * counts.values)
-        w = w / w.sum() * len(counts)
+        w = total / (n_classes * counts.values)
+        w = w / w.sum() * n_classes
         return torch.tensor(w, dtype=torch.float32)
 
     def get_summary(self) -> Dict[str, Any]:

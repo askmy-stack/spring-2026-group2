@@ -325,6 +325,38 @@ def test_class_weights():
     assert w.shape[0] == 2
 
 
+def test_eda_helpers_empty():
+    loader = create_loader("standard", config_path=str(CFG_PATH), mode="train")
+    labels = loader.get_labels()
+    subjects = loader.get_subject_ids()
+    df = loader.get_data_index()
+    assert isinstance(labels, np.ndarray)
+    assert isinstance(subjects, np.ndarray)
+    assert isinstance(df, pd.DataFrame)
+
+
+def test_num_classes_empty():
+    loader = create_loader("standard", config_path=str(CFG_PATH), mode="train")
+    nc = loader.num_classes
+    assert isinstance(nc, int)
+    assert nc >= 2
+
+
+def test_class_weights_multiclass():
+    """Verify get_class_weights works with more than 2 classes."""
+    loader = create_loader("standard", config_path=str(CFG_PATH), mode="train")
+    loader.data_index = pd.DataFrame({
+        "label": [0, 0, 0, 1, 1, 2],
+        "subject_id": ["s1"] * 6,
+        "path": ["f.edf"] * 6,
+        "start_sec": list(range(6)),
+        "end_sec": list(range(1, 7)),
+    })
+    w = loader.get_class_weights()
+    assert w.shape[0] == 3
+    assert loader.num_classes == 3
+
+
 def run_all():
     tests = [
         test_download_sample_edf,
@@ -350,6 +382,9 @@ def run_all():
         test_loader_empty,
         test_loader_shape,
         test_class_weights,
+        test_eda_helpers_empty,
+        test_num_classes_empty,
+        test_class_weights_multiclass,
     ]
     passed = 0
     failed = []

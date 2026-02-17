@@ -14,6 +14,7 @@ from dataset.base import BaseEEGDataset
 from core.io import read_raw
 from core.cache import PickleCacher, make_cache_key, CacheStats
 from core.augment import augment
+from core.signal import normalize_signal
 
 try:
     import dask
@@ -50,6 +51,9 @@ class StandardEEGLoader(BaseEEGDataset):
         end = min(end, raw.n_times)
         data, _ = raw[:, start:end]
         data = _pad_or_trim(data, self.n_channels, self.window_samples)
+        norm_method = self.cfg.get("signal", {}).get("normalize", None)
+        if norm_method:
+            data = normalize_signal(data, method=norm_method)
         return data
 
 
@@ -94,6 +98,9 @@ class CachedEEGLoader(BaseEEGDataset):
             end = min(int(float(row["end_sec"]) * sfreq), raw.n_times)
             data, _ = raw[:, start:end]
             data = _pad_or_trim(data, self.n_channels, self.window_samples)
+            norm_method = self.cfg.get("signal", {}).get("normalize", None)
+            if norm_method:
+                data = normalize_signal(data, method=norm_method)
             self.cacher.put(cache_key, data, ns="raw")
 
         if self.do_augment:

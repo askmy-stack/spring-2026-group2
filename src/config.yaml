@@ -10,6 +10,7 @@ signal:
   notch: 60.0
   reference: "average"
   reject_threshold: null
+  normalize: "zscore"
 
 resampling:
   default_method: "polyphase"
