@@ -8,7 +8,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from pipeline.ingest import run_pipeline, run_chbmit_pipeline
 from dataset.factory import create_loader, create_pytorch_dataloaders
 
-
 CONFIG = "config.yaml"
 
 
