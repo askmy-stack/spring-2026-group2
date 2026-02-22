@@ -1,0 +1,41 @@
+window_index:
+  train_csv: "results/dataloader/window_index_train.csv"
+  val_csv: "results/dataloader/window_index_val.csv"
+  test_csv: "results/dataloader/window_index_test.csv"
+
+io:
+  output_dir: "results/features"
+
+limits:
+  max_files: 1
+  max_windows: 100
+
+fe:
+  sfreq_mode: "auto"   # don’t hardcode 250; your BIDS is 256
+  target_sfreq: 256
+
+  time:
+    mean: true
+    std: true
+    rms: true
+    line_length: true
+    zero_crossing_rate: true
+    skew: true
+    kurtosis: true
+    hjorth: true
+
+  frequency:
+    welch:
+      nperseg_sec: 2
+      fmin: 0.5
+      fmax: 50
+
+    bands:
+      delta: [0.5, 4]
+      theta: [4, 8]
+      alpha: [8, 13]
+      beta:  [13, 30]
+      gamma: [30, 50]
+
+    relative_power: true
+    spectral_entropy: true
