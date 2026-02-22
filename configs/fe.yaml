@@ -1,62 +1,18 @@
-# ==========================================
-# Feature Engineering Config (BIDS -> CSV)
-# ==========================================
+window_index:
+  train_csv: "results/dataloader/window_index_train.csv"
+  val_csv: "results/dataloader/window_index_val.csv"
+  test_csv: "results/dataloader/window_index_test.csv"
 
 io:
-  bids_root: "ds005873"
-  output_csv: "results/features/features_ds005873.csv"
+  output_dir: "results/features"
 
-
-# ------------------------------------------
-# BIDS settings
-# ------------------------------------------
-bids:
-  modality: "eeg"          # "eeg" for SeizeIT2
-  pick_eeg_only: true
-
-
-# ------------------------------------------
-# Windowing
-# ------------------------------------------
-windows:
-  window_sec: 10
-  step_sec: 5
-
-
-# ------------------------------------------
-# Limits (debug / full run)
-# ------------------------------------------
 limits:
-  max_files: 2          # null = process all EDFs
-  max_windows: null        # null = no global cap
+  max_files: 1
+  max_windows: 100
 
-
-# ------------------------------------------
-# Labeling from *_events.tsv
-# SeizeIT2 uses eventType with seizure codes starting with "sz"
-# ------------------------------------------
-labeling:
-  onset_col: "onset"
-  duration_col: "duration"
-
-  type_cols:
-    - "eventType"
-    - "trial_type"
-    - "event_type"
-    - "value"
-    - "description"
-
-  seizure_prefix: "sz"     # anything starting with "sz" => seizure
-  # optional (not required by code, but useful to document)
-  non_seizure_code: "bckg"
-  ignore_codes: ["impd"]
-
-
-# ------------------------------------------
-# Feature extraction settings
-# ------------------------------------------
 fe:
-  sfreq: 250   # confirm using raw.info["sfreq"] if unsure
+  sfreq_mode: "auto"   # don’t hardcode 250; your BIDS is 256
+  target_sfreq: 256
 
   time:
     mean: true
@@ -64,11 +20,15 @@ fe:
     rms: true
     line_length: true
     zero_crossing_rate: true
-    hjorth: true          # keep if your extractor supports it
+    skew: true
+    kurtosis: true
+    hjorth: true
 
   frequency:
     welch:
       nperseg_sec: 2
+      fmin: 0.5
+      fmax: 50
 
     bands:
       delta: [0.5, 4]
@@ -79,4 +39,3 @@ fe:
 
     relative_power: true
     spectral_entropy: true
-
