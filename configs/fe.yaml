@@ -11,7 +11,7 @@ limits:
   max_windows: 100
 
 fe:
-  sfreq_mode: "auto"   # don’t hardcode 250; your BIDS is 256
+  sfreq_mode: "auto"   
   target_sfreq: 256
 
   time:
@@ -39,3 +39,4 @@ fe:
 
     relative_power: true
     spectral_entropy: true
+
