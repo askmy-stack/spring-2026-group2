@@ -115,9 +115,17 @@ Engineered features are grouped into three primary domains:
 
 ### Reference Papers
 
-- **Paper A:** EEG Signal Processing for Medical Diagnosis — Comprehensive Review  
-- **Paper B:** Frontiers in Artificial Intelligence (2022) — EEG Feature Extraction Review  
-- **Paper C:** EEG Signal Processing and Feature Extraction — IJMTST  
+1. **Paper A:**  
+   EEG Signal Processing for Medical Diagnosis, Healthcare and Monitoring — A Comprehensive Review  
+   🔗 https://ieeexplore.ieee.org/document/10353995  
+
+2. **Paper B:**  
+   Frontiers in Artificial Intelligence (2022) — EEG Feature Extraction Review  
+   🔗 https://www.frontiersin.org/articles/10.3389/frai.2022.1072801  
+
+3. **Paper C:**  
+   EEG Signal Processing and Feature Extraction — IJMTST  
+   🔗 https://www.researchgate.net/publication/374337940_EEG_Signal_Processing_and_Feature_Extraction  
 
 ---
 
