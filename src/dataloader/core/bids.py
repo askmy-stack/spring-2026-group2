@@ -107,6 +107,24 @@ def _write_channels_tsv(path: Path, raw: mne.io.BaseRaw):
         })
     pd.DataFrame(rows).to_csv(path, sep="\t", index=False)
 
+import json
+from pathlib import Path
+
+def ensure_dataset_description(bids_root: str | Path, bids_version: str = "1.7.0") -> None:
+    bids_root = Path(bids_root)
+    bids_root.mkdir(parents=True, exist_ok=True)
+    dd = bids_root / "dataset_description.json"
+    if dd.exists():
+        return
+
+    payload = {
+        "Name": "EEG Seizure Dataset",
+        "BIDSVersion": bids_version,
+        "DatasetType": "raw",
+        "GeneratedBy": [{"Name": "EEG Seizure Detection Dataloader", "Version": "1.0"}],
+    }
+    dd.write_text(json.dumps(payload, indent=2))
+
 
 def _write_events_tsv(path: Path, events: List[Dict]):
     rows = []

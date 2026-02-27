@@ -16,6 +16,16 @@ CHBMIT_BASE = "https://physionet.org/files/chbmit/1.0.0"
 # 6 subjects with diverse age/sex for stratification testing
 # Age/sex sourced from CHB-MIT dataset documentation
 # Each entry: (subject_id, edf_filename, age, sex)
+CHBMIT_SUBJECTS_BASE = "https://physionet.org/content/chbmit/1.0.0/SUBJECT-INFO"
+
+# One representative EDF per subject that contains confirmed seizures
+# Annotations extracted from each subject's summary.txt on PhysioNet
+CHBMIT_EDF_FILES_BASE = "https://physionet.org/content/chbmit/1.0.0/RECORDS"
+
+# Ground-truth seizure intervals (onset_sec, offset_sec) from PhysioNet summary files
+CHBMIT_SEIZURES_BASE = "https://physionet.org/content/chbmit/1.0.0/RECORDS-WITH-SEIZURES"
+
+
 CHBMIT_SUBJECTS: List[Dict[str, Any]] = [
     {"subject_id": "chb01", "age": 11,  "sex": "F", "group": "pediatric"},
     {"subject_id": "chb02", "age": 11,  "sex": "M", "group": "pediatric"},
@@ -45,6 +55,12 @@ CHBMIT_SEIZURES: Dict[str, List[Tuple[float, float]]] = {
     "chb08_02.edf": [(2972.0, 3053.0)],
     "chb10_12.edf": [(6.0,    100.0)],
 }
+
+_CHBMIT_SUBJECT_CACHE: List[Dict[str, Any]] | None = None
+_CHBMIT_EDF_FILES_LIST_CACHE: List[str] | None = None
+_CHBMIT_SEIZURES_LIST_CACHE: List[str] | None = None
+_CHBMIT_EDF_FILES_BY_SUBJECT_CACHE: Dict[str, List[str]] | None = None
+_CHBMIT_SEIZURES_BY_SUBJECT_CACHE: Dict[str, List[str]] | None = None
 
 
 def download_chbmit(

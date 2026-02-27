@@ -1,7 +1,0 @@
-{
-  "n_epochs_before": 89,
-  "n_epochs_after": 89,
-  "epoch_len_sec": 3.99609375,
-  "mean_var_uV2": 1810.6318131961377,
-  "mean_kurtosis": 4.469935018634059
-}

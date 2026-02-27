@@ -1,0 +1,153 @@
+dataset:
+  raw_root: "../data/raw"
+  results_root: "results"
+  bids_root: "results/bids_dataset"
+  sample_data_dir: "../data/raw"
+
+signal:
+  target_sfreq: 256
+  bandpass: [1.0, 50.0]
+  notch: 60.0
+  reference: "average"
+  reject_threshold: null
+  normalize: "zscore"
+
+resampling:
+  default_method: "polyphase"
+  augment_on_ingestion: false
+
+channels:
+  target_count: 16
+  policy: "spatial_selection"
+  standard_set: ["Fp1", "Fp2", "F3", "F4", "F7", "F8", "Fz", "Cz",
+                  "T7", "T8", "P7", "P8", "C3", "C4", "O1", "O2"]
+  interpolation:
+    enable: true
+    method: "spherical_spline"
+    min_channels_required: 4
+
+windowing:
+  enable: false
+  window_sec: 4.0
+  stride_sec: 2.0
+  label_mode: "event"
+  exclude_negatives_within_sec: 300
+
+
+labeling:
+  mode: "binary"
+  overlap_threshold: 0.5
+  seizure_keywords: ["seizure", "sz", "ictal", "epilep"]
+  seizure_types:
+    background: 0
+    unknown: 1
+    focal: 2
+    generalized: 3
+    absence: 4
+    tonic_clonic: 5
+
+balance:
+  enable: true
+  seizure_ratio: 0.3
+  method: "oversample"
+  seed: 42
+
+split:
+  policy: "subject_independent"
+  train: 0.70
+  val: 0.15
+  test: 0.15
+  seed: 42
+
+stratification:
+  enable: false
+  age_bins: [0, 5, 10, 15, 20, 30, 100]
+  age_bin_labels: ["0-5", "5-10", "10-15", "15-20", "20-30", "30+"]
+  sex_categories: ["M", "F", "unknown"]
+  min_subjects_per_stratum: 1
+
+caching:
+  enable: true
+  max_memory_mb: 4096
+  disk_cache_dir: "results/cache"
+  use_dask: true
+
+metadata:
+  defaults:
+    age: "NA"
+    sex: "NA"
+    sfreq: 256
+    task: "eeg"
+    institution: "NA"
+    manufacturer: "NA"
+    model: "NA"
+    software_version: "NA"
+    recording_type: "continuous"
+  search_companion_files: true
+  companion_extensions: [".json", ".yaml", ".yml", ".txt", ".meta"]
+  parse_filename: true
+  filename_patterns:
+    age: "_?age?_?(\\d+)"
+    sex: "_?(male|female|m|f)_?"
+    sfreq: "_?(sf|sfreq|hz)?_?(\\d+)hz?"
+
+bids:
+  fill_missing_with_na: true
+  version: "1.7.0"
+  task_name: "eeg"
+  write_sidecar: true
+  write_events: true
+  write_channels_tsv: true
+  write_participants_tsv: true
+
+pytorch:
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+  shuffle_train: true
+  drop_last: false
+  prefetch_factor: 2
+  persistent_workers: true
+
+augmentation:
+  enable: true
+  train_only: true
+  seizure_prob: 0.8
+  background_prob: 0.3
+  time_warp:
+    enable: true
+    sigma: 0.15
+  magnitude_scale:
+    enable: true
+    sigma: 0.15
+  add_noise:
+    enable: true
+    snr_db: 25
+  time_shift:
+    enable: true
+    max_samples: 15
+
+system:
+  n_jobs: -1
+  log_level: "INFO"
+  show_progress: true
+  random_seed: 42
+
+export:
+  save_metadata_json: true
+  generate_summary: true
+  save_indices: true
+  metadata_dir: "results/dataloader/metadata"
+  reports_dir: "results/reports"
+
+validation:
+  verify_on_load: false
+  num_samples_to_verify: 10
+  checks:
+    check_nans: true
+    check_infs: true
+    check_range: true
+    check_shape: true
+  auto_fix:
+    remove_nans: false
+    clip_extreme_values: false
