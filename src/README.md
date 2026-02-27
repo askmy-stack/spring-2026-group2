@@ -3,12 +3,12 @@
 
 Window-level feature extraction module for EEG seizure detection research.
 
-This module converts pre-generated window index CSV files into structured feature matrices for classical machine learning models (XGBoost, SVM, Logistic Regression) and hybrid deep learning pipelines.
+This module converts pre-generated window index CSV files into structured feature matrices for classical machine learning models.
 
 Each output CSV row represents one EEG window and includes:
 
 - Per-channel signal features  
-- Multi-channel connectivity features (optional)  
+- Multi-channel connectivity features  
 - Binary label (0 = background, 1 = seizure)  
 - Window metadata  
 
@@ -26,7 +26,7 @@ python run_features_from_index.py --config configs/fe.yaml
 
 ## Pipeline Overview
 
-This module assumes the Data Pipeline has already generated:
+This module assumes the Data Pipeline has already generated the csv files for train, test and val....for example:
 
 ```
 
@@ -51,6 +51,8 @@ Feature extraction flow:
 ## Configuration (configs/fe.yaml)
 
 ### Window Index Inputs
+
+for exmaple:
 
 ```yaml
 window_index:
