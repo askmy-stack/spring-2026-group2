@@ -1,13 +1,3 @@
-Perfect. Below is your **FULL updated Feature Engineering README** in the exact same professional format as your Data Pipeline README — now including the **detailed 4-column research-grade Data Dictionary section**.
-
-You can copy this entire block and paste directly into:
-
-```
-src/features/README.md
-```
-
----
-
 ```md
 # EEG Seizure Detection — Feature Engineering
 
@@ -89,17 +79,72 @@ fe:
 
 ---
 
-# Extracted Feature Categories
+# Extracted Feature Domains
 
-| Category         | Type         | Purpose                                    |
-| ---------------- | ------------ | ------------------------------------------ |
-| Time-domain      | Per-channel  | Amplitude statistics & waveform morphology |
-| Hjorth           | Per-channel  | Activity, mobility, complexity             |
-| Nonlinear        | Per-channel  | Entropy & signal irregularity              |
-| Frequency-domain | Per-channel  | Spectral energy distribution               |
-| FFT              | Per-channel  | Dominant oscillatory rhythm                |
-| Wavelet          | Per-channel  | Multi-resolution energy                    |
-| Connectivity     | Window-level | Inter-channel synchrony                    |
+The engineered features are organized into three primary domains:
+
+| Domain | Type | Includes |
+|--------|------|----------|
+| **Time-Domain Features** | Per-channel + Window-level | Mean, Std, RMS, Line Length, ZCR, Skew, Kurtosis, Hjorth parameters, Pearson correlation |
+| **Frequency-Domain Features** | Per-channel | Welch PSD, Band Power (δ, θ, α, β, γ), Relative Power, Spectral Entropy, FFT Dominant Frequency |
+| **Time–Frequency & Nonlinear Features** | Per-channel | Wavelet Energy, Wavelet Entropy, Sample Entropy, Permutation Entropy, Lempel–Ziv Complexity |
+
+---
+
+## Domain Explanation
+
+### 1. Time-Domain
+
+These features operate directly on the signal amplitude over time.
+
+They capture:
+- Amplitude variability
+- Waveform shape
+- Rapid changes
+- Channel-to-channel synchrony
+
+Includes:
+- Statistical moments
+- Line length
+- Hjorth parameters
+- Pearson correlation summaries
+
+---
+
+### 2. Frequency-Domain
+
+These features analyze the signal in the frequency spectrum using Fourier-based methods.
+
+They capture:
+- Energy distribution across frequency bands
+- Rhythmic activity
+- Dominant oscillatory behavior
+
+Includes:
+- Welch PSD
+- Band power
+- Relative power
+- Spectral entropy
+- FFT dominant frequency
+
+---
+
+### 3. Time–Frequency & Nonlinear
+
+These features capture non-stationary and complex behavior.
+
+They capture:
+- Transient bursts
+- Multi-scale patterns
+- Signal unpredictability
+- Structural complexity
+
+Includes:
+- Wavelet decomposition (multi-resolution)
+- Entropy-based measures
+- Complexity measures
+
+---
 
 ---
 
@@ -122,15 +167,15 @@ The table below documents:
 
 ## Time-Domain Features
 
-| Method             | Why We Use It                                    | Mathematical Definition                | Source     |   |         |
-| ------------------ | ------------------------------------------------ | -------------------------------------- | ---------- | - | ------- |
-| Mean               | Detect baseline drift                            | μ = (1/N) Σ xᵢ                         | Paper A    |   |         |
-| Standard Deviation | Seizures increase amplitude variance             | σ = √[(1/N) Σ(xᵢ − μ)²]                | Paper A    |   |         |
-| RMS                | Measures signal energy magnitude                 | RMS = √[(1/N) Σ xᵢ²]                   | Paper A    |   |         |
-| Line Length        | Captures waveform complexity & rapid transitions | LL = Σ                                 | xᵢ − xᵢ₋₁  |   | Paper C |
-| Zero Crossing Rate | Detects oscillatory pattern shifts               | ZCR = (1/N) Σ I(sign(xᵢ) ≠ sign(xᵢ₋₁)) | Paper A, C |   |         |
-| Skewness           | Detects asymmetric spike activity                | E[(x−μ)³] / σ³                         | Paper A    |   |         |
-| Kurtosis           | Detects heavy-tailed spike bursts                | E[(x−μ)⁴] / σ⁴                         | Paper A    |   |         |
+| Method             | Why We Use It                                    | Mathematical Definition                | Source     | 
+| ------------------ | ------------------------------------------------ | -------------------------------------- | ---------- | 
+| Mean               | Detect baseline drift                            | μ = (1/N) Σ xᵢ                         | Paper A    | 
+| Standard Deviation | Seizures increase amplitude variance             | σ = √[(1/N) Σ(xᵢ − μ)²]                | Paper A    |
+| RMS                | Measures signal energy magnitude                 | RMS = √[(1/N) Σ xᵢ²]                   | Paper A    |
+| Line Length        | Captures waveform complexity & rapid transitions | LL = Σ xᵢ − xᵢ₋₁                       | Paper C    |
+| Zero Crossing Rate | Detects oscillatory pattern shifts               | ZCR = (1/N) Σ I(sign(xᵢ) ≠ sign(xᵢ₋₁)) | Paper A, C |
+| Skewness           | Detects asymmetric spike activity                | E[(x−μ)³] / σ³                         | Paper A    |
+| Kurtosis           | Detects heavy-tailed spike bursts                | E[(x−μ)⁴] / σ⁴                         | Paper A    |   
 
 ---
 
@@ -156,13 +201,13 @@ The table below documents:
 
 ## Frequency-Domain (Welch PSD)
 
-| Method                     | Why We Use It                               | Mathematical Definition | Source     |   |            |
-| -------------------------- | ------------------------------------------- | ----------------------- | ---------- | - | ---------- |
-| Total Power                | Measures overall spectral energy            | ∫ PSD(f) df             | Paper B    |   |            |
-| Band Power (δ, θ, α, β, γ) | Identifies seizure-related frequency shifts | ∫ PSD(f) over band      | Paper B, C |   |            |
-| Relative Power             | Normalizes band energy distribution         | BandPower / TotalPower  | Paper C    |   |            |
-| Spectral Entropy           | Measures spectral concentration vs spread   | −Σ p log(p)             | Paper C    |   |            |
-| FFT Dominant Frequency     | Detects strongest oscillatory rhythm        | argmax                  | FFT(f)     |   | Paper A, B |
+| Method                     | Why We Use It                               | Mathematical Definition | Source     |
+| -------------------------- | ------------------------------------------- | ----------------------- | ---------- |
+| Total Power                | Measures overall spectral energy            | ∫ PSD(f) df             | Paper B    |
+| Band Power (δ, θ, α, β, γ) | Identifies seizure-related frequency shifts | ∫ PSD(f) over band      | Paper B, C |
+| Relative Power             | Normalizes band energy distribution         | BandPower / TotalPower  | Paper C    |
+| Spectral Entropy           | Measures spectral concentration vs spread   | −Σ p log(p)             | Paper C    |
+| FFT Dominant Frequency     | Detects strongest oscillatory rhythm        | argmax FFT(f)           | Paper A, B |
 
 ---
 
@@ -183,27 +228,6 @@ The table below documents:
 | Pearson Correlation         | Detects hypersynchronization      | Cov(X,Y)/(σxσy)              | Paper B |
 | Corr Mean / Std / Max / Min | Summarizes network-level coupling | Statistics of upper triangle | Paper B |
 
----
-
-# Design Rationale
-
-Seizure activity is characterized by:
-
-* Increased amplitude variability
-* Frequency band redistribution
-* Irregular signal transitions
-* Hypersynchronization across channels
-* Non-stationary transient bursts
-
-The selected features cover:
-
-* Statistical morphology
-* Spectral structure
-* Multi-scale decomposition
-* Nonlinear dynamics
-* Network-level synchrony
-
-This creates a robust feature space for classical ML baselines and hybrid architectures.
 
 ---
 
