@@ -1,29 +1,66 @@
+# ------------------------------------------
+# Window index inputs
+# ------------------------------------------
 window_index:
-  train_csv: "results/dataloader/window_index_train.csv"
-  val_csv: "results/dataloader/window_index_val.csv"
-  test_csv: "results/dataloader/window_index_test.csv"
+  train_csv: "results/dataloader/window_index_train.csv"    # chnage according to your file name and path
+  val_csv:   "results/dataloader/window_index_val.csv"      # change according to your file name and path
+  test_csv:  "results/dataloader/window_index_test.csv"     # change according to your file name and path
 
+# ------------------------------------------
+# Output
+# ------------------------------------------
 io:
-  output_dir: "results/features"
+  output_dir: "results/features"                       # change according to your file name and path
 
+# ------------------------------------------
+# Limits (optional)
+# ------------------------------------------
 limits:
-  max_files: 1
-  max_windows: 100
+  max_files: 1      # null to run all
+  max_windows: 100  # null to run all 
 
+# ------------------------------------------
+# Feature extraction settings
+# ------------------------------------------
 fe:
-  sfreq_mode: "auto"   
+  # sampling frequency
+  sfreq_mode: "auto"     # auto | force
   target_sfreq: 256
 
+  # -----------------
+  # Time-domain
+  # -----------------
   time:
     mean: true
     std: true
     rms: true
+    min: false
+    max: false
+    range: false
     line_length: true
     zero_crossing_rate: true
     skew: true
     kurtosis: true
     hjorth: true
 
+  # -----------------
+  # Nonlinear
+  # -----------------
+  nonlinear:
+    sample_entropy: true
+    sampen_m: 2
+    sampen_r: 0.2
+
+    perm_entropy: true
+    perm_order: 3
+    perm_delay: 1
+
+    lz_complexity: true
+    lz_bins: 10
+
+  # -----------------
+  # Frequency-domain
+  # -----------------
   frequency:
     welch:
       nperseg_sec: 2
@@ -40,3 +77,27 @@ fe:
     relative_power: true
     spectral_entropy: true
 
+    # FFT dominant frequency feature
+    fft_dominant_freq: true
+    fft:
+      fmin: 0.5
+      fmax: 50
+      detrend: true
+      window: true
+
+  # -----------------
+  # Wavelet (optional)
+  # -----------------
+  wavelet:
+    enabled: true
+    wavelet: "db4"
+    level: 4
+    entropy: true
+
+  # -----------------
+  # Connectivity (optional)
+  # -----------------
+  connectivity:
+    enabled: true
+    method: "pearson"
+    summary: "mean_std_max"
