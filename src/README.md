@@ -1,4 +1,4 @@
-```md
+
 # EEG Seizure Detection — Feature Engineering
 
 Window-level feature extraction module for EEG seizure detection research.
