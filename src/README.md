@@ -1,237 +1,81 @@
-
 # EEG Seizure Detection — Feature Engineering
 
 Window-level feature extraction module for EEG seizure detection research.
 
-This module converts pre-generated window index CSV files into structured feature matrices for classical machine learning models.
+This module converts pre-generated window index CSV files into structured feature matrices suitable for classical ML models (XGBoost, Random Forest, SVM, etc.).
 
-Each output CSV row represents one EEG window and includes:
+Each output CSV row represents one EEG window and contains:
 
-- Per-channel signal features  
-- Multi-channel connectivity features  
+- Per-channel engineered features  
+- Optional connectivity features  
 - Binary label (0 = background, 1 = seizure)  
 - Window metadata  
 
 ---
 
-## Entry Point
+# Entry Point
 
+```bash
+python run_features_from_index.py --config configs/fe.yaml
 ```
 
-python run_features_from_index.py --config configs/fe.yaml
+Optional:
 
+```bash
+python run_features_from_index.py --config configs/fe.yaml --split train
 ```
 
 ---
 
-## Pipeline Overview
+# Pipeline Overview
 
-This module assumes the Data Pipeline has already generated the csv files for train, test and val....for example:
+This module assumes the **Data Pipeline** has already generated window index CSV files.
+
+Example structure:
 
 ```
-
 results/dataloader/
 ├── window_index_train.csv
 ├── window_index_val.csv
 └── window_index_test.csv
+```
 
-````
-
-Feature extraction flow:
+The feature extraction workflow:
 
 1. Load window index CSV
-2. Load EEG window segment
+2. Load corresponding EEG segment from EDF
 3. Resample if configured
-4. Apply `AdvancedFeatureExtractor`
-5. Attach metadata + label
+4. Extract features using `AdvancedFeatureExtractor`
+5. Attach label + metadata
 6. Save split-level feature CSV
 
 ---
 
-## Configuration (configs/fe.yaml)
+# Configuration (`configs/fe.yaml`)
 
-### Window Index Inputs
+All behavior is controlled through `fe.yaml`.
 
-for exmaple:
+## Window Index Inputs
 
 ```yaml
 window_index:
   train_csv: "results/dataloader/window_index_train.csv"
   val_csv:   "results/dataloader/window_index_val.csv"
   test_csv:  "results/dataloader/window_index_test.csv"
-````
+```
 
-### Output
+These paths can point anywhere. The module does not assume a fixed folder structure.
+
+---
+
+## Output
 
 ```yaml
 io:
   output_dir: "results/features"
 ```
 
-### Sampling
-
-```yaml
-fe:
-  sfreq_mode: "auto"     # auto | force
-  target_sfreq: 256
-```
-
-* `auto` → use native sampling frequency
-* `force` → resample to target_sfreq
-
----
-
-# Extracted Feature Domains
-
-The engineered features are organized into three primary domains:
-
-| Domain | Type | Includes |
-|--------|------|----------|
-| **Time-Domain Features** | Per-channel + Window-level | Mean, Std, RMS, Line Length, ZCR, Skew, Kurtosis, Hjorth parameters, Pearson correlation |
-| **Frequency-Domain Features** | Per-channel | Welch PSD, Band Power (δ, θ, α, β, γ), Relative Power, Spectral Entropy, FFT Dominant Frequency |
-| **Time–Frequency & Nonlinear Features** | Per-channel | Wavelet Energy, Wavelet Entropy, Sample Entropy, Permutation Entropy, Lempel–Ziv Complexity |
-
----
-
-## Domain Explanation
-
-### 1. Time-Domain
-
-These features operate directly on the signal amplitude over time.
-
-They capture:
-- Amplitude variability
-- Waveform shape
-- Rapid changes
-- Channel-to-channel synchrony
-
-Includes:
-- Statistical moments
-- Line length
-- Hjorth parameters
-- Pearson correlation summaries
-
----
-
-### 2. Frequency-Domain
-
-These features analyze the signal in the frequency spectrum using Fourier-based methods.
-
-They capture:
-- Energy distribution across frequency bands
-- Rhythmic activity
-- Dominant oscillatory behavior
-
-Includes:
-- Welch PSD
-- Band power
-- Relative power
-- Spectral entropy
-- FFT dominant frequency
-
----
-
-### 3. Time–Frequency & Nonlinear
-
-These features capture non-stationary and complex behavior.
-
-They capture:
-- Transient bursts
-- Multi-scale patterns
-- Signal unpredictability
-- Structural complexity
-
-Includes:
-- Wavelet decomposition (multi-resolution)
-- Entropy-based measures
-- Complexity measures
-
----
-
-# Detailed Data Dictionary
-
-The table below documents:
-
-* Method name
-* Why it is used in seizure detection
-* Mathematical formulation
-* Source reference (from reviewed papers)
-
-### Reference Papers
-
-* **Paper A:** EEG Signal Processing for Medical Diagnosis — Comprehensive Review
-* **Paper B:** Frontiers in Artificial Intelligence (2022) — EEG Feature Extraction Review
-* **Paper C:** EEG Signal Processing and Feature Extraction — IJMTST
-
----
-
-## Time-Domain Features
-
-| Method             | Why We Use It                                    | Mathematical Definition                | Source     | 
-| ------------------ | ------------------------------------------------ | -------------------------------------- | ---------- | 
-| Mean               | Detect baseline drift                            | μ = (1/N) Σ xᵢ                         | Paper A    | 
-| Standard Deviation | Seizures increase amplitude variance             | σ = √[(1/N) Σ(xᵢ − μ)²]                | Paper A    |
-| RMS                | Measures signal energy magnitude                 | RMS = √[(1/N) Σ xᵢ²]                   | Paper A    |
-| Line Length        | Captures waveform complexity & rapid transitions | LL = Σ xᵢ − xᵢ₋₁                       | Paper C    |
-| Zero Crossing Rate | Detects oscillatory pattern shifts               | ZCR = (1/N) Σ I(sign(xᵢ) ≠ sign(xᵢ₋₁)) | Paper A, C |
-| Skewness           | Detects asymmetric spike activity                | E[(x−μ)³] / σ³                         | Paper A    |
-| Kurtosis           | Detects heavy-tailed spike bursts                | E[(x−μ)⁴] / σ⁴                         | Paper A    |   
-
----
-
-## Hjorth Parameters
-
-| Method            | Why We Use It                  | Mathematical Definition    | Source     |
-| ----------------- | ------------------------------ | -------------------------- | ---------- |
-| Hjorth Activity   | Measures signal power          | Var(x)                     | Paper A, C |
-| Hjorth Mobility   | Proxy for dominant frequency   | √[Var(dx) / Var(x)]        | Paper A, C |
-| Hjorth Complexity | Measures waveform irregularity | Mobility(dx) / Mobility(x) | Paper A, C |
-
----
-
-## Nonlinear Features
-
-| Method                | Why We Use It                                 | Mathematical Definition | Source  |
-| --------------------- | --------------------------------------------- | ----------------------- | ------- |
-| Sample Entropy        | Detects irregular transitions during seizures | SampEn = −log(A/B)      | Paper A |
-| Permutation Entropy   | Measures temporal pattern complexity          | PE = −Σ p log(p)        | Paper A |
-| Lempel–Ziv Complexity | Measures compressibility / novelty            | Count of new substrings | Paper A |
-
----
-
-## Frequency-Domain (Welch PSD)
-
-| Method                     | Why We Use It                               | Mathematical Definition | Source     |
-| -------------------------- | ------------------------------------------- | ----------------------- | ---------- |
-| Total Power                | Measures overall spectral energy            | ∫ PSD(f) df             | Paper B    |
-| Band Power (δ, θ, α, β, γ) | Identifies seizure-related frequency shifts | ∫ PSD(f) over band      | Paper B, C |
-| Relative Power             | Normalizes band energy distribution         | BandPower / TotalPower  | Paper C    |
-| Spectral Entropy           | Measures spectral concentration vs spread   | −Σ p log(p)             | Paper C    |
-| FFT Dominant Frequency     | Detects strongest oscillatory rhythm        | argmax FFT(f)           | Paper A, B |
-
----
-
-## Wavelet Features (DWT)
-
-| Method                       | Why We Use It                          | Mathematical Definition | Source     |
-| ---------------------------- | -------------------------------------- | ----------------------- | ---------- |
-| Wavelet Approximation Energy | Captures low-frequency seizure energy  | Σ cA²                   | Paper A, C |
-| Wavelet Detail Energy        | Captures transient bursts              | Σ cD²                   | Paper A, C |
-| Wavelet Entropy              | Measures multi-scale energy dispersion | −Σ p log(p)             | Paper C    |
-
----
-
-## Connectivity Features
-
-| Method                      | Why We Use It                     | Mathematical Definition      | Source  |
-| --------------------------- | --------------------------------- | ---------------------------- | ------- |
-| Pearson Correlation         | Detects hypersynchronization      | Cov(X,Y)/(σxσy)              | Paper B |
-| Corr Mean / Std / Max / Min | Summarizes network-level coupling | Statistics of upper triangle | Paper B |
-
-
----
-
-# Output Structure
+Generated files:
 
 ```
 results/features/
@@ -240,29 +84,159 @@ results/features/
 └── features_test.csv
 ```
 
-Each row contains:
+---
 
-* Engineered features
-* Label (0/1)
-* Window timing
-* Recording metadata
+## Sampling Control
+
+```yaml
+fe:
+  sfreq_mode: "auto"   # auto | force
+  target_sfreq: 256
+```
+
+- `auto` → use native EDF sampling rate  
+- `force` → resample to `target_sfreq`  
+
+---
+
+# Feature Domains
+
+Engineered features are grouped into three primary domains:
+
+| Domain | Scope | Includes |
+|--------|-------|----------|
+| **Time-Domain** | Per-channel + Window-level | Mean, Std, RMS, Line Length, ZCR, Skew, Kurtosis, Hjorth, Pearson correlation |
+| **Frequency-Domain** | Per-channel | Welch PSD, Band Power (δ, θ, α, β, γ), Relative Power, Spectral Entropy, FFT Dominant Frequency |
+| **Time–Frequency & Nonlinear** | Per-channel | Wavelet Energy, Wavelet Entropy, Sample Entropy, Permutation Entropy, Lempel–Ziv Complexity |
+
+---
+
+# Detailed Data Dictionary
+
+### Reference Papers
+
+- **Paper A:** EEG Signal Processing for Medical Diagnosis — Comprehensive Review  
+- **Paper B:** Frontiers in Artificial Intelligence (2022) — EEG Feature Extraction Review  
+- **Paper C:** EEG Signal Processing and Feature Extraction — IJMTST  
+
+---
+
+## Time-Domain Features
+
+| Method | Why Used | Formula | Source |
+|--------|----------|---------|--------|
+| Mean | Detect baseline shift | μ = (1/N) Σ xᵢ | A |
+| Std | Measures amplitude variability | √[(1/N) Σ(xᵢ − μ)²] | A |
+| RMS | Signal energy magnitude | √[(1/N) Σ xᵢ²] | A |
+| Line Length | Captures rapid transitions | Σ |xᵢ − xᵢ₋₁| | C |
+| ZCR | Oscillatory activity shifts | (1/N) Σ I(sign change) | A, C |
+| Skew | Asymmetric spike detection | E[(x−μ)³]/σ³ | A |
+| Kurtosis | Heavy-tailed bursts | E[(x−μ)⁴]/σ⁴ | A |
+
+---
+
+## Hjorth Parameters
+
+| Method | Purpose | Formula | Source |
+|--------|---------|---------|--------|
+| Activity | Signal power | Var(x) | A, C |
+| Mobility | Frequency proxy | √[Var(dx)/Var(x)] | A, C |
+| Complexity | Irregularity | Mobility(dx)/Mobility(x) | A, C |
+
+---
+
+## Nonlinear Features
+
+| Method | Purpose | Formula | Source |
+|--------|---------|---------|--------|
+| Sample Entropy | Irregularity detection | −log(A/B) | A |
+| Permutation Entropy | Temporal complexity | −Σ p log(p) | A |
+| Lempel–Ziv | Signal compressibility | New substring count | A |
+
+---
+
+## Frequency-Domain (Welch PSD)
+
+| Method | Purpose | Formula | Source |
+|--------|---------|---------|--------|
+| Total Power | Overall spectral energy | ∫ PSD(f) df | B |
+| Band Power | Frequency redistribution | ∫ PSD over band | B, C |
+| Relative Power | Normalized band energy | Band / Total | C |
+| Spectral Entropy | Spectral concentration | −Σ p log(p) | C |
+| FFT Dominant Freq | Strongest oscillation | argmax |FFT(f)| | A, B |
+
+---
+
+## Wavelet Features
+
+| Method | Purpose | Formula | Source |
+|--------|---------|---------|--------|
+| Approx Energy | Low-frequency seizure energy | Σ cA² | A, C |
+| Detail Energy | Transient burst detection | Σ cD² | A, C |
+| Wavelet Entropy | Multi-scale dispersion | −Σ p log(p) | C |
+
+---
+
+## Connectivity Features
+
+| Method | Purpose | Formula | Source |
+|--------|---------|---------|--------|
+| Pearson Corr | Hypersynchronization | Cov(X,Y)/(σxσy) | B |
+| Corr Mean/Std/Max/Min | Network summary | Stats of upper triangle | B |
+
+---
+
+# Feature Count
+
+With default configuration:
+
+Per-channel features:
+
+- Time-domain: 10  
+- Nonlinear: 3  
+- Frequency-domain: 13  
+- Wavelet: 6  
+
+**Total per channel = 32 features**
+
+Connectivity (if enabled):
+
+- 4 features
+
+### Final Formula
+
+```
+Total Features = (C × 32) + 4
+```
+
+Where `C` = number of EEG channels.
+
+### Example (16 channels)
+
+```
+16 × 32 = 512
++ 4 connectivity
+= 516 features per window
+```
+
+Metadata columns (split, label, timing, path, subject_id) are not included in model features.
 
 ---
 
 # Requirements
 
-* Python ≥ 3.9
-* numpy ≥ 1.24
-* pandas ≥ 2.0
-* scipy ≥ 1.10
-* mne ≥ 1.5
-* pywavelets ≥ 1.4
-* PyYAML ≥ 6.0
+- Python ≥ 3.9  
+- numpy ≥ 1.24  
+- pandas ≥ 2.0  
+- scipy ≥ 1.10  
+- mne ≥ 1.5  
+- pywavelets ≥ 1.4  
+- PyYAML ≥ 6.0  
 
 ---
 
 # Run Command
 
-```
+```bash
 python run_features_from_index.py --config configs/fe.yaml
 ```
