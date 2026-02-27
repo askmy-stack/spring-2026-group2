@@ -148,8 +148,6 @@ Includes:
 
 ---
 
----
-
 # Detailed Data Dictionary
 
 The table below documents:
