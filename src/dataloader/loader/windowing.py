@@ -31,22 +31,21 @@ def build_windows(
     Build window index for a single EDF file.
 
     Args:
-        edf_path: Path to the EDF file
-        seizure_intervals: List of (start_sec, end_sec) tuples
+        edf_path: Path to processed EDF
+        seizure_intervals: [(start_sec, end_sec), ...] for this file
         subject_id: Subject identifier
-        metadata: Dict with age, sex, etc.
-        duration_sec: File duration (0 = auto-detect from file)
-        window_sec: Window length in seconds
+        metadata: {"age": ..., "sex": ...}
+        duration_sec: Duration of recording (auto-detected if 0)
+        window_sec: Window size in seconds
         stride_sec: Stride between windows
         sfreq: Sampling frequency
-        exclude_near_seizure_sec: Skip background within N sec of seizure
+        exclude_near_seizure_sec: Skip background windows within this range of seizures
         max_background_per_file: Cap background windows per file (0 = no cap).
-            Seizure windows are NEVER capped. Default 150 keeps diverse
-            background samples without storing thousands of redundant windows.
+            Seizure windows are NEVER capped.
         seed: Random seed for background sampling
 
-    Returns DataFrame with columns:
-        path, subject_id, start_sec, end_sec, label, age, sex
+    Returns:
+        DataFrame with columns: path, subject_id, start_sec, end_sec, label, age, sex
     """
     # Get duration from file if not provided
     if duration_sec <= 0:
@@ -64,7 +63,8 @@ def build_windows(
 
     while t <= max_start:
         end = t + window_sec
-        # Check if this window overlaps any seizure interval
+
+        # Check seizure overlap
         label = 0
         for s_start, s_end in seizure_intervals:
             overlap_start = max(t, s_start)
@@ -75,7 +75,7 @@ def build_windows(
                     label = 1
                     break
 
-        # Skip background windows too close to seizures
+        # Skip background too close to seizures
         if label == 0 and exclude_near_seizure_sec > 0 and seizure_intervals:
             skip = False
             for s_start, s_end in seizure_intervals:
@@ -98,18 +98,17 @@ def build_windows(
         }
 
         if label == 1:
-            seizure_rows.append(row)   # ALL seizure windows kept — never capped
+            seizure_rows.append(row)
         else:
             background_rows.append(row)
 
         t += stride_sec
 
-    # Cap background windows if requested
+    # Cap background windows (seizure windows are NEVER capped)
     if max_background_per_file > 0 and len(background_rows) > max_background_per_file:
         rng = np.random.RandomState(seed)
         indices = rng.choice(len(background_rows), size=max_background_per_file, replace=False)
-        indices.sort()  # keep temporal order
-        background_rows = [background_rows[i] for i in indices]
+        background_rows = [background_rows[i] for i in sorted(indices)]
 
     all_rows = seizure_rows + background_rows
     return pd.DataFrame(all_rows)
@@ -147,16 +146,13 @@ def balance_windows(
     if current_ratio >= seizure_ratio:
         return df
 
-    # Calculate how many positive samples we need
     # target: n_pos_new / (n_neg + n_pos_new) = seizure_ratio
-    # n_pos_new = seizure_ratio * n_neg / (1 - seizure_ratio)
     n_pos_target = int(seizure_ratio * n_neg / (1.0 - seizure_ratio))
 
     if n_pos_target <= n_pos:
         return df
 
     rng = np.random.RandomState(seed)
-    # Oversample by repeating + sampling remainder
     n_repeats = n_pos_target // n_pos
     n_remainder = n_pos_target % n_pos
 
