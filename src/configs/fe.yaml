@@ -2,9 +2,9 @@
 # Window index inputs
 # ------------------------------------------
 window_index:
-  train_csv: "results/dataloader/window_index_train.csv"    # chnage according to your file name and path
-  val_csv:   "results/dataloader/window_index_val.csv"      # change according to your file name and path
-  test_csv:  "results/dataloader/window_index_test.csv"     # change according to your file name and path
+  train_csv: "results/dataloader/chbmit/window_index_train.csv"
+  val_csv:   "results/dataloader/chbmit/window_index_val.csv"
+  test_csv:  "results/dataloader/chbmit/window_index_test.csv"
 
 # ------------------------------------------
 # Output
@@ -101,3 +101,4 @@ fe:
     enabled: true
     method: "pearson"
     summary: "mean_std_max"
+
