@@ -8,7 +8,7 @@ Output:
     results/tensors/{dataset}/{split}/
         data.pt     — shape (N, 16, 256)
         labels.pt   — shape (N,)
-        metadata.pt — dict with subject_ids, ages, etc.
+        metadata.pt — dict with subject_ids, counts, etc.
 """
 
 from __future__ import annotations
@@ -95,7 +95,6 @@ def write_tensors(
     """
     df = pd.read_csv(csv_path)
     if df.empty or len(df) == 0:
-        # Save empty tensors
         output_dir.mkdir(parents=True, exist_ok=True)
         torch.save(torch.zeros(0, n_channels, n_samples), output_dir / "data.pt")
         torch.save(torch.zeros(0, dtype=torch.long), output_dir / "labels.pt")
@@ -140,8 +139,8 @@ def write_tensors(
         return {"n_windows": 0, "n_seizure": 0, "n_background": 0}
 
     # Stack and save
-    data_tensor = torch.from_numpy(np.stack(all_data, axis=0))  # (N, 16, 256)
-    labels_tensor = torch.tensor(all_labels, dtype=torch.long)  # (N,)
+    data_tensor = torch.from_numpy(np.stack(all_data, axis=0))   # (N, 16, 256)
+    labels_tensor = torch.tensor(all_labels, dtype=torch.long)   # (N,)
 
     torch.save(data_tensor, output_dir / "data.pt")
     torch.save(labels_tensor, output_dir / "labels.pt")
@@ -178,10 +177,9 @@ class TensorDataset(Dataset):
         if not data_path.exists():
             raise FileNotFoundError(f"No data.pt in {tensor_dir}. Run generate() first.")
 
-        self.data = torch.load(data_path, weights_only=True)      # (N, 16, 256)
+        self.data = torch.load(data_path, weights_only=True)       # (N, 16, 256)
         self.labels = torch.load(labels_path, weights_only=True)   # (N,)
 
-        # Load metadata if available
         meta_path = self.tensor_dir / "metadata.pt"
         self.metadata = torch.load(meta_path, weights_only=True) if meta_path.exists() else {}
 

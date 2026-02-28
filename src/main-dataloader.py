@@ -1,18 +1,14 @@
 #!/usr/bin/env python
 """
-main_loader.py — Single entry point for the EEG data pipeline.
-
-Interactive:
-    python main_loader.py
-
 CLI:
     python main_loader.py --dataset chbmit --subjects chb01 chb02 chb03 chb04 chb05 --generate
     python main_loader.py --dataset siena --subjects PN00 PN01 PN03 --generate
+    python main_loader.py --dataset chbmit --generate --max-bg-per-file 200
     python main_loader.py --dataset chbmit --info
     python main_loader.py --dataset chbmit --test-load
 
 From code:
-    from main_loader import get_dataloaders
+    from dataloader.loader.loader import get_dataloaders
     train_dl, val_dl, test_dl = get_dataloaders("chbmit")
 """
 
@@ -22,9 +18,10 @@ import shutil
 import sys
 from pathlib import Path
 
+# Add src/ to path so imports work
 sys.path.insert(0, str(Path(__file__).parent))
 
-from dataloaders.common.loader import generate, get_dataloaders
+from dataloader.loader.loader import generate, get_dataloaders
 
 
 # ═══════════════════════════════════════════════════════════
@@ -33,7 +30,7 @@ from dataloaders.common.loader import generate, get_dataloaders
 
 def _show_info(dataset: str):
     """Show dataset status — what exists on disk."""
-    from dataloaders.common.loader import _csv_dir, _tensor_dir, _tensors_exist, _csvs_exist
+    from dataloader.loader.loader import _csv_dir, _tensor_dir, _tensors_exist, _csvs_exist
 
     csv_dir = _csv_dir(dataset)
     tensor_dir = _tensor_dir(dataset)
@@ -75,7 +72,7 @@ def _show_info(dataset: str):
                 subs = df["subject_id"].nunique() if not df.empty else 0
                 print(f"  {split:5s}: {n:,} windows, {n_sz:,} seizure ({ratio:.1%}), {subs} subjects")
     else:
-        print(f"  No data found. Run pipeline first (option 1, 2, or 3).")
+        print(f"  No data found. Run pipeline first.")
 
     print()
 
@@ -92,12 +89,12 @@ def _test_load(dataset: str, batch_size: int = 64):
     print(f"    Label dist : bg={int((batch_labels == 0).sum())}, sz={int((batch_labels == 1).sum())}")
     print(f"    Data range : [{batch_data.min():.3f}, {batch_data.max():.3f}]")
     print(f"    Data mean  : {batch_data.mean():.4f}")
-    print(f"\n  ✓ DataLoaders working!\n")
+    print(f"\n  DataLoaders working!\n")
 
 
 def _clear_data(dataset: str):
     """Clear generated CSVs and tensors for a dataset."""
-    from dataloaders.common.loader import _csv_dir, _tensor_dir
+    from dataloader.loader.loader import _csv_dir, _tensor_dir
 
     csv_dir = _csv_dir(dataset)
     tensor_dir = _tensor_dir(dataset)
@@ -118,17 +115,29 @@ def _clear_data(dataset: str):
 
 def _ask_subjects(dataset: str) -> list:
     """Ask user which subjects to process."""
-    if dataset == "chbmit":
-        from dataloaders.chbmit.config import ALL_SUBJECTS
-        print(f"\n  Available subjects: {ALL_SUBJECTS}")
-    elif dataset == "siena":
-        from dataloaders.siena.config import ALL_SUBJECTS
-        print(f"\n  Available subjects: {ALL_SUBJECTS}")
+    from dataloader.loader.loader import _get_loader
+    loader = _get_loader(dataset)
+    loader._ensure_records()
+    available = loader.list_subjects()
+    print(f"\n  Available subjects: {available}")
 
     user_input = input("\n  Enter subject IDs (space-separated), or 'all' for all: ").strip()
     if user_input.lower() == "all" or user_input == "":
-        return None  # None means all
+        return None
     return user_input.split()
+
+
+def _ask_max_background() -> int:
+    """Ask user for max background windows per file."""
+    user_input = input("\n  Max background windows per EDF file (default 150, 0 = no cap): ").strip()
+    if not user_input:
+        return 150
+    try:
+        val = int(user_input)
+        return max(0, val)
+    except ValueError:
+        print("  Invalid number, using default 150.")
+        return 150
 
 
 # ═══════════════════════════════════════════════════════════
@@ -141,11 +150,10 @@ def menu():
     print("=" * 60)
     print("  1. Generate CHB-MIT dataset      (download → process → tensors)")
     print("  2. Generate Siena dataset         (download → process → tensors)")
-    print("  3. Generate from local EDF folder (your own seizure data)")
-    print("  4. Show dataset statistics")
-    print("  5. Get PyTorch DataLoaders")
-    print("  6. Test DataLoader output")
-    print("  7. Clear generated data")
+    print("  3. Show dataset statistics")
+    print("  4. Get PyTorch DataLoaders")
+    print("  5. Test DataLoader output")
+    print("  6. Clear generated data")
     print("  0. Exit")
     print("=" * 60)
 
@@ -159,46 +167,23 @@ def interactive():
         if not choice:
             continue
 
-        # ── 0. Exit ───────────────────────────────────────
         if choice == "0":
             print("  Bye!")
             sys.exit(0)
 
-        # ── 1. Generate CHB-MIT ───────────────────────────
         elif choice == "1":
             print("\n  [CHB-MIT] Pediatric epilepsy, 256 Hz, 24 subjects")
             subjects = _ask_subjects("chbmit")
-            generate(dataset="chbmit", subjects=subjects)
+            max_bg = _ask_max_background()
+            generate(dataset="chbmit", subjects=subjects, max_background_per_file=max_bg)
 
-        # ── 2. Generate Siena ─────────────────────────────
         elif choice == "2":
             print("\n  [SIENA] Adult epilepsy, 512 Hz → resampled to 256 Hz, 14 subjects")
             subjects = _ask_subjects("siena")
-            generate(dataset="siena", subjects=subjects)
+            max_bg = _ask_max_background()
+            generate(dataset="siena", subjects=subjects, max_background_per_file=max_bg)
 
-        # ── 3. Local EDF folder ───────────────────────────
         elif choice == "3":
-            print("\n  [LOCAL] Process your own EDF files")
-            print("  Expected folder layout:")
-            print("    your_folder/")
-            print("      subject_01/")
-            print("        recording_01.edf")
-            print("        recording_01-summary.txt   (optional, for seizure annotations)")
-            print("      subject_02/")
-            print("        recording_01.edf")
-            print()
-            folder = input("  Enter path to your EDF folder: ").strip()
-            if not folder:
-                print("  No path given.")
-            elif not Path(folder).exists():
-                print(f"  Path not found: {folder}")
-            else:
-                print(f"\n  This feature is coming soon.")
-                print(f"  For now, organize your EDFs like CHB-MIT and use option 1.")
-                print(f"  Or place them in data/raw/chbmit/ with matching summary.txt files.")
-
-        # ── 4. Show stats ─────────────────────────────────
-        elif choice == "4":
             print("\n  Which dataset?")
             print("    a) CHB-MIT")
             print("    b) Siena")
@@ -214,8 +199,7 @@ def interactive():
             else:
                 print("  Invalid choice.")
 
-        # ── 5. Get DataLoaders ────────────────────────────
-        elif choice == "5":
+        elif choice == "4":
             print("\n  Which dataset?")
             print("    a) CHB-MIT")
             print("    b) Siena")
@@ -231,10 +215,8 @@ def interactive():
                     print(f"  Test batches  : {len(test_dl)}")
                 except FileNotFoundError as e:
                     print(f"\n  {e}")
-                    print(f"  Run option 1 or 2 first to generate data.")
 
-        # ── 6. Test DataLoader ────────────────────────────
-        elif choice == "6":
+        elif choice == "5":
             print("\n  Which dataset?")
             print("    a) CHB-MIT")
             print("    b) Siena")
@@ -247,10 +229,8 @@ def interactive():
                     _test_load(dataset)
                 except FileNotFoundError as e:
                     print(f"\n  {e}")
-                    print(f"  Run option 1 or 2 first to generate data.")
 
-        # ── 7. Clear data ─────────────────────────────────
-        elif choice == "7":
+        elif choice == "6":
             print("\n  Clear generated data for:")
             print("    a) CHB-MIT")
             print("    b) Siena")
@@ -286,11 +266,12 @@ def cli():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main_loader.py                                                          (interactive menu)
-  python main_loader.py --dataset chbmit --subjects chb01 chb02 chb03 --generate (CLI generate)
-  python main_loader.py --dataset siena --generate                               (all Siena subjects)
-  python main_loader.py --dataset chbmit --info                                  (show stats)
-  python main_loader.py --dataset chbmit --test-load                             (verify DataLoaders)
+  python main_loader.py                                                           (interactive menu)
+  python main_loader.py --dataset chbmit --subjects chb01 chb02 chb03 --generate  (CLI generate)
+  python main_loader.py --dataset chbmit --generate --max-bg-per-file 200         (custom cap)
+  python main_loader.py --dataset siena --generate                                (all Siena subjects)
+  python main_loader.py --dataset chbmit --info                                   (show stats)
+  python main_loader.py --dataset chbmit --test-load                              (verify DataLoaders)
         """,
     )
     parser.add_argument("--dataset", type=str, choices=["chbmit", "siena"],
@@ -307,6 +288,8 @@ Examples:
                         help="Force re-download and re-process")
     parser.add_argument("--seizure-ratio", type=float, default=0.3,
                         help="Target seizure ratio (default: 0.3)")
+    parser.add_argument("--max-bg-per-file", type=int, default=150,
+                        help="Max background windows per EDF file (default: 150, 0 = no cap)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed (default: 42)")
     parser.add_argument("--batch-size", type=int, default=64,
@@ -341,6 +324,7 @@ Examples:
             force=args.force,
             seizure_ratio=args.seizure_ratio,
             seed=args.seed,
+            max_background_per_file=args.max_bg_per_file,
         )
 
     if args.test_load:
@@ -358,8 +342,6 @@ Examples:
 # ═══════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    # No arguments → interactive menu
-    # With arguments → CLI mode
     if len(sys.argv) == 1:
         interactive()
     else:

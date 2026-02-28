@@ -6,7 +6,7 @@ Uses seizure ratio stratification when possible.
 """
 
 from __future__ import annotations
-from typing import Dict, List, Tuple
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
@@ -40,13 +40,12 @@ def subject_split(
     n = len(subjects)
 
     if n < 3:
-        # Can't split fewer than 3 subjects meaningfully
         print(f"  [WARN] Only {n} subject(s) — all go to train. Need 3+ for val/test.")
         return df, pd.DataFrame(columns=df.columns), pd.DataFrame(columns=df.columns)
 
-    # Compute seizure ratio per subject for stratified splitting
     rng = np.random.RandomState(seed)
 
+    # Compute seizure ratio per subject for stratified splitting
     subj_info = []
     for sid in subjects:
         mask = df["subject_id"] == sid
