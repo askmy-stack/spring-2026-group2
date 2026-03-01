@@ -1,0 +1,10 @@
+numpy>=1.23
+pandas>=1.5
+matplotlib>=3.7
+PyYAML>=6.0
+
+mne>=1.6
+mne-bids>=0.15
+
+scipy>=1.10
+scikit-learn>=1.2
