@@ -1,111 +1,83 @@
-```markdown
+````markdown
 # EEG Pipeline for Window-Level Seizure Detection (CHB-MIT)
 
-This repository contains a complete EEG processing pipeline designed for **window-level seizure detection**.  
-It takes EEG windows indexed by the dataloader stage, applies optional preprocessing (filtering, re-referencing), runs **quality control (QC)** and **frequency/time-domain analysis**, produces per-window EDA artifacts (plots + CSVs), generates dataset-wide summaries, and optionally exports cleaned windows into a **BIDS-derivatives** style dataset.
-
-The goal is to make the workflow **reproducible, inspectable, and ML-ready** (e.g., CNN training).
+This repository implements an end-to-end **window-level EEG preprocessing + QC + EDA pipeline** to support **seizure detection** modeling (e.g., CNNs).  
+It consumes window indices produced by the dataloader stage, loads EDF windows, optionally preprocesses them (filtering / rereference), runs QC and frequency-domain analysis, generates per-window artifacts (plots/CSVs/JSON), and builds dataset-wide summaries for validation.
 
 ---
 
-## Why this pipeline exists
+## 1) What this pipeline does
 
-EEG seizure detection often fails in practice because:
-- raw EEG files are large and messy,
-- labels are event-based but models are trained on short windows,
-- preprocessing and QC decisions are hard to track,
-- models silently learn artifacts if QC is not visible.
+### Inputs (what you need before running)
+- **Window index CSVs** from the dataloader:
+  - `results/dataloader/window_index_train.csv`
+  - `results/dataloader/window_index_val.csv`
+  - `results/dataloader/window_index_test.csv`
+- **EDF files** referenced by the `path` column in the CSVs.
+- **Config file**:
+  - `src/eeg_pipeline/configs/config.yaml`
 
-This pipeline addresses that by:
-- working at the **window** level (the unit used for ML),
-- generating **QC logs and EDA outputs** per window,
-- producing **dataset-level summaries** to validate data quality and class balance,
-- supporting **BIDS-format outputs** so the results are standardized and easier to share/debug.
+**Expected columns in each window index CSV**
+- `path` — EDF file path (absolute or repo-relative)
+- `subject_id` — subject identifier (e.g., `chb01`)
+- `start_sec`, `end_sec` — window boundaries in seconds
+- `label` — `0` = non-seizure, `1` = seizure
+- optional: `age`, `sex`
 
----
+### Processing steps (high-level)
+For each window row in the CSV:
+1. Load the EDF (cached per EDF file to avoid repeated loads)
+2. Crop the window `[start_sec, end_sec)`
+3. (Optional) Preprocess  
+   - bandpass filtering + notch filtering  
+   - rereference (if enabled)
+4. QC + bad-channel handling  
+   - detect NaNs, flat channels, clipped channels, noisy channels  
+   - mark bad channels and optionally interpolate
+5. EDA outputs (per-window)
+   - raw before/after plots  
+   - QC JSON  
+   - PSD / bandpower / FFT / spectrograms (based on config)
+6. Dataset overview outputs
+   - `windows.csv`, `recordings.csv`, `summary.json` + charts
+7. (Optional) Export cleaned windows to **BIDS derivatives** structure (EDF + sidecars)
 
-## Input and Output Overview
+### Outputs (what gets generated)
+Outputs are written under `results/preprocess/` (paths configurable):
 
-### Inputs
-1. **Window index CSVs** produced by your dataloader:
-   - `results/dataloader/window_index_train.csv`
-   - `results/dataloader/window_index_val.csv`
-   - `results/dataloader/window_index_test.csv`
+**EDA outputs**
+- `results/preprocess/eda/<window_id>/window/`
+  - `qc.json`
+  - `raw_before.png`, `raw_after.png`
+  - `psd_mean_uV2_per_hz.csv`
+  - `bandpower_uV2.csv`
+  - spectrogram plots (PSD/Morlet) if enabled
+  - FFT plot/CSV if enabled
 
-   Expected columns:
-   - `path` (EDF path)
-   - `subject_id`
-   - `start_sec`, `end_sec`
-   - `label` (0=nonseizure, 1=seizure)
-   - optional: `age`, `sex`
+**Dataset overview**
+- `results/preprocess/overview/`
+  - `windows.csv` — per-window metadata + QC summary + artifact pointers
+  - `recordings.csv` — recording-level info (duration, sfreq, channels)
+  - `summary.json` — dataset summary (counts + QC aggregates)
+  - `charts/` — label counts and windows-per-subject charts
 
-2. **EDF files** (from CHB-MIT or other EEG sources) referenced by the CSV `path`.
+**Diagrams**
+- `results/preprocess/diagrams/`
+  - `eda.mmd`
+  - `modules.mmd`
 
-3. **Config file**:
-   - `src/eeg_pipeline/configs/config.yaml`
-
----
-
-### Outputs (Default)
-All pipeline outputs go under:
-
-- `results/preprocess/eda/`  
-  Per-window artifacts (QC + plots + CSVs)
-
-- `results/preprocess/overview/`  
-  Dataset-level overview: `windows.csv`, `summary.json`, charts
-
-- `results/preprocess/diagrams/`  
-  Mermaid diagrams describing enabled modules: `eda.mmd`, `modules.mmd`
-
-Optional:
-- `results/preprocess/bids_dataset/`  
-  Cleaned EEG windows exported as BIDS derivatives (EDF + sidecars)
-
----
-
-## Repository Structure
-
-```
-
-- src/eeg_pipeline/
-- analysis/
-- time_domain.py        # QC, bad channel logic, epoching, time-domain utilities
-- freq_domain.py        # PSD, bandpower, FFT, spectrograms, Morlet, frequency utilities
-- configs/
-- config.yaml           # main pipeline config
-- core/
-- artifacts.py          # artifact writer (plots/CSVs/JSON)
-- yaml_utils.py         # YAML helpers: load_yaml(), get()
-- bids_io.py            # BIDS loading helpers (if needed)
-- bids_derivatives.py   # export cleaned EEG to BIDS-derivatives
-- pipeline/
-- run_pipeline.py       # main runner (reads dataloader CSVs, processes windows)
-- preprocessor.py       # preprocessing orchestration
-- filtering.py          # filtering helpers
-- eda_engine.py         # per-window EDA generation
-- dataset_overview.py   # summary CSV/JSON + charts
-- bot_diagrams.py       # Mermaid diagram generation from config flags
-- verify.py             # optional sanity checks
-- main.py                 # single entrypoint to run the whole pipeline
-
-````
+**(Optional) Export cleaned windows (BIDS derivatives)**
+- `results/preprocess/bids_dataset/`
+  - `sub-*/eeg/*.edf`
+  - `*_eeg.json`, `*_channels.tsv`, `*_events.tsv`, etc.
 
 ---
 
-## Installation
-
-### 1) Create an environment
-```bash
-python -m venv .venv
-source .venv/bin/activate
-````
-
-### 2) Install dependencies
+## 2) Install dependencies
 
 ```bash
 pip install -r requirements.txt
-```
+````
 
 ---
 
@@ -141,6 +113,14 @@ dataloader_index:
     - "results/dataloader/window_index_train.csv"
     - "results/dataloader/window_index_val.csv"
     - "results/dataloader/window_index_test.csv"
+  columns:
+    path: "path"
+    subject_id: "subject_id"
+    start_sec: "start_sec"
+    end_sec: "end_sec"
+    label: "label"
+    age: "age"
+    sex: "sex"
 ```
 
 ### Outputs
@@ -154,32 +134,51 @@ outputs:
 
 ### Preprocessing
 
-* Bandpass + notch filtering
-* Optional reref / ICA depending on config
+```yaml
+preprocess:
+  filtering:
+    enabled: true
+    l_freq: 1.0
+    h_freq: 60.0
+    notch_freqs: [60.0]
+```
 
-### QC + Bad Channels
+### QC + bad channels
 
-QC settings include:
+```yaml
+analysis:
+  time_domain:
+    qc:
+      enabled: true
+      max_abs_uV: 500.0
+      flat_var_thresh_uV2: 1.0e-12
+      nan_allowed: false
+      noisy_var_factor: 10.0
 
-- * NaN checks
-- * clipping threshold (`max_abs_uV`)
-- * flatline detection (`flat_var_thresh_uV2`)
-- * noisy channels by variance outliers (`noisy_var_factor`)
+    bad_channels:
+      enabled: true
+      use_qc_rules: true
+      interpolate: false
+```
 
-Bad channel module can:
+### Frequency-domain EDA
 
-- * mark bads using QC rules
-- * interpolate bad channels (optional)
+```yaml
+analysis:
+  frequency_domain:
+    psd:
+      enabled: true
+    bandpower:
+      enabled: true
+    spectrogram:
+      enabled: true
+    fft:
+      enabled: true
+    morlet:
+      enabled: true
+```
 
-### Frequency-domain / Time-frequency analysis
-
-- * PSD (Welch)
-- * bandpower
-- * PSD spectrogram
-- * FFT
-- * Morlet spectrogram (if enabled)
-
-### export (BIDS derivatives)
+### Optional export to BIDS derivatives
 
 ```yaml
 export_cleaned:
@@ -189,117 +188,63 @@ export_cleaned:
 
 ---
 
-## Running the Pipeline (One Command)
+## Run the pipeline
 
-- Use the single entrypoint:
+Single entrypoint:
 
 ```bash
 PYTHONPATH=src python3 src/eeg_pipeline/main.py --config src/eeg_pipeline/configs/config.yaml
 ```
 
-What this does:
+---
 
-- 1. Loads the window index CSVs
-- 2. For each row/window:
+## Key concepts (so results are interpretable)
 
-  - * loads the EDF file (cached per file)
-   - * crops the window `[start_sec, end_sec)`
-   - * preprocesses (if enabled)
-   - * runs QC and marks bad channels (if enabled)
-   - * generates EDA artifacts (if enabled)
-3. Generates dataset overview (summary JSON + CSV + charts)
-4. Optionally exports cleaned windows to BIDS derivatives
+### QC metrics and “bad channels”
+
+* QC checks each window for:
+
+  * NaNs
+  * clipped amplitudes (`max_abs_uV`)
+  * flat channels (`flat_var_thresh_uV2`)
+  * noisy variance outliers (`noisy_var_factor`)
+* Channels flagged by QC rules can be marked as bad (`raw.info["bads"]`).
+* `qc_noisy_frac` / `noisy_channel_frac` is typically the fraction of channels marked bad in that window.
+
+### Why per-window EDA is useful
+
+Per-window artifacts help verify:
+
+* the filter is working (PSD/FFT changes)
+* seizure vs non-seizure spectral differences (bandpower/spectrograms)
+* QC and bad-channel decisions are reasonable
+* the pipeline is not silently learning artifacts
 
 ---
 
-## What Each Output Means (Important for Evaluation)
-
-### Per-window QC (`qc.json`)
-
-Saved in each window’s EDA folder. Typical fields include:
-
-* NaN indicators (`has_nan`, `nan_frac`)
-* variance summaries (`median_var_uV2`, etc.)
-* lists/counts of flagged channels:
-
-  * `flat_channels`, `noisy_channels`, `clipped_channels`
-* `bads` and `n_bads` (channels marked bad)
-* `noisy_channel_frac` (fraction of channels marked bad)
-
-Why it matters:
-
-* prevents training models on corrupted/noisy EEG windows
-* provides traceability and reproducibility
-
----
-
-### Per-window frequency artifacts
-
-Examples:
-
-* `psd_mean_uV2_per_hz.csv`
-* `bandpower_uV2.csv`
-* `fft_*.csv`
-* `psd_spectrogram_*.png`
-* `morlet_spectrogram_*.png`
-
-Why it matters:
-
-* verifies filtering and spectral structure
-* provides baseline features (bandpower/PSD) for ML
-* helps interpret differences between seizure/non-seizure windows
-
----
-
-### Dataset overview (`results/preprocess/overview/`)
-
-* `windows.csv`: a structured index of windows + QC + artifact pointers
-* `summary.json`: dataset summary (counts, QC means)
-* charts:
-
-  * label distribution
-  * windows per subject
-
-Why it matters:
-
-* verifies class balance and subject distribution
-* provides high-level QC statistics so issues are caught early
-
----
-
-## Notes on BIDS Export (Derivatives)
-
-If export is enabled, cleaned windows can be written as:
-
-* EDF in BIDS-structured folders (`sub-*/eeg/*.edf`)
-* sidecar metadata (`*_eeg.json`, `*_channels.tsv`, `*_events.tsv`)
-
-This helps:
-
-* keep processed data in a standardized form
-* preserve metadata needed for downstream tools
-* enable validation and sharing
-
----
-
-## Common Debug Tips (Things That Prevent Mistakes)
-
-1. **Start with limited windows**
-   Use:
-
-   * `eda.max_windows_total`
-   * `eda.max_windows_per_subject`
-     to avoid generating thousands of artifacts while debugging.
-
-2. **Check QC alignment**
-   If summary QC looks correct but per-window `qc.json` doesn’t, ensure the same QC dict is passed consistently through pipeline → EDA writer.
-
-3. **Subject-wise split**
-   Ensure dataloader creates train/val/test splits by subject to avoid leakage.
-
-4. **Artifacts ≠ Labels**
-   A spectrogram showing strong low frequency power can be normal EEG or artifact. Use QC + raw plots to confirm.
-
+## Project structure
 
 ```
+src/eeg_pipeline/
+  analysis/
+    time_domain.py
+    freq_domain.py
+  configs/
+    config.yaml
+  core/
+    artifacts.py
+    bids_derivatives.py
+    bids_io.py
+    yaml_utils.py
+  pipeline/
+    bot_diagrams.py
+    dataset_overview.py
+    eda_engine.py
+    filtering.py
+    preprocessor.py
+    run_pipeline.py
+    verify.py
+  main.py
 ```
+
+
