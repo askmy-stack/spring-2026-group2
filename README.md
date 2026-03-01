@@ -76,7 +76,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-**## Configure**
+## Configure
 
 Edit:
 src/eeg_pipeline/configs/config.yaml
@@ -93,12 +93,12 @@ outputs.*: where artifacts are written
 
 export_cleaned.*: BIDS derivative export (optional)
 
-**## Run (Single Command)**
+## Run (Single Command)
 
 Use the single entrypoint:
 PYTHONPATH=src python3 src/eeg_pipeline/main.py --config src/eeg_pipeline/configs/config.yaml
 
-**Notes / Tips**
+## Notes / Tips
 
 For debugging, limit output volume using:
 
