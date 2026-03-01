@@ -36,7 +36,7 @@ def _resolve_path(repo_root: Path, p: str | Path) -> Path:
 
 def _load_window_index(cfg: Dict[str, Any]) -> pd.DataFrame:
     """
-    Loads and concatenates src window index CSVs.
+    Loads and concatenates dataloader window index CSVs.
     Expected columns:
       path, subject_id, start_sec, end_sec, label, age, sex
     """
@@ -44,9 +44,9 @@ def _load_window_index(cfg: Dict[str, Any]) -> pd.DataFrame:
     paths = idx_cfg.get("csv_paths", [])
     if not paths:
         paths = [
-            "results/src/window_index_train.csv",
-            "results/src/window_index_val.csv",
-            "results/src/window_index_test.csv",
+            "results/dataloader/window_index_train.csv",
+            "results/dataloader/window_index_val.csv",
+            "results/dataloader/window_index_test.csv",
         ]
 
     cols_cfg = idx_cfg.get("columns", {}) or {}
@@ -393,7 +393,7 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
             cleaned, steps = pre.process(
                 raw_win,
                 do_load=True,
-                do_resample=False,  # already done in src
+                do_resample=False,  # already done in dataloader
                 do_reref=do_reref,
                 do_filter=do_filter,
             )

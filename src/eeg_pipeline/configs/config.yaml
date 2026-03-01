@@ -13,12 +13,12 @@ bids:
   suffix: "eeg"
   extension: ".edf"
 
-# NEW: window index produced by src (already labeled)
+# NEW: window index produced by dataloader (already labeled)
 dataloader_index:
   csv_paths:
-    - "results/src/window_index_train.csv"
-    - "results/src/window_index_val.csv"
-    - "results/src/window_index_test.csv"
+    - "results/dataloader/window_index_train.csv"
+    - "results/dataloader/window_index_val.csv"
+    - "results/dataloader/window_index_test.csv"
   columns:
     path: "path"
     subject_id: "subject_id"
