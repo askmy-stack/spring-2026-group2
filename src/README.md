@@ -34,7 +34,7 @@ This module assumes the **Data Pipeline** has already generated window index CSV
 Example structure:
 
 ```
-results/dataloader/
+results/dataloader/chbmit/
 ├── window_index_train.csv
 ├── window_index_val.csv
 └── window_index_test.csv
@@ -59,9 +59,9 @@ All behavior is controlled through `fe.yaml`.
 
 ```yaml
 window_index:
-  train_csv: "results/dataloader/window_index_train.csv"
-  val_csv:   "results/dataloader/window_index_val.csv"
-  test_csv:  "results/dataloader/window_index_test.csv"
+  train_csv: "results/dataloader/chbmit/window_index_train.csv"
+  val_csv:   "results/dataloader/chbmit/window_index_val.csv"
+  test_csv:  "results/dataloader/chbmit/window_index_test.csv"
 ```
 
 These paths can point anywhere. The module does not assume a fixed folder structure.
