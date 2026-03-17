@@ -148,15 +148,14 @@ class DatasetOverview:
         }
 
     def _write_windows_csv(self, path: Path, rows: List[Dict[str, Any]]) -> None:
-        if not rows:
-            path.write_text("")
-            return
-
         # Option A: whitelist columns from config (recommended)
         whitelist = get(self.cfg, "overview.windows_columns", None)
         if isinstance(whitelist, list) and whitelist:
             header = [str(c) for c in whitelist]
         else:
+            if not rows:
+                path.write_text("")
+                return
             # Option B: union of keys actually present (no hard-coded / no empty columns)
             keys = set()
             for r in rows:
@@ -181,12 +180,17 @@ class DatasetOverview:
 
         total_hours = float(sum(r.duration_sec for r in recordings) / 3600.0) if recordings else 0.0
 
-        def _mean_key(label_value: int, key: str) -> float:
+        def _mean_key(label_value: int, key: str) -> Optional[float]:
             vals = [w.get(key) for w in self.windows if int(w.get("label", -1)) == label_value]
             vals = [v for v in vals if v is not None and np.isfinite(float(v))]
-            return float(np.mean([float(v) for v in vals])) if vals else float("nan")
+            return float(np.mean([float(v) for v in vals])) if vals else None
+
+        rec_mode = bool(get(self.cfg, "eda.recording_level.enabled", False))
+        win_mode = bool(get(self.cfg, "eda.window_level.enabled", False))
+        mode = "recording" if rec_mode and not win_mode else "window" if win_mode and not rec_mode else "mixed"
 
         return {
+            "mode": mode,
             "n_subjects": n_subjects,
             "n_recordings": n_recordings,
             "n_windows": n_windows,

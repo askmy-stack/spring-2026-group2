@@ -1,0 +1,94 @@
+EEG Seizure Detection Model Report (CHB-MIT, 16x256 windows)
+
+1) Objective
+Build and compare CNN-based baselines for binary seizure detection on standardized EEG windows.
+Input: (B, 16, 256), labels: 0=background, 1=seizure.
+Primary metrics intended: AUPRC, AUROC.
+Secondary metrics: F1, precision, recall, specificity at threshold 0.5 and val-selected threshold.
+
+2) Data Pipeline Outcome
+- Total windows before balancing: 114,511
+- Seizure windows before balancing: 11,611 (10.1%)
+- Balanced splits:
+  - Train: 96,857 windows (30.0% seizure)
+  - Val: 19,500 windows (30.0% seizure)
+  - Test: 30,642 windows (30.0% seizure)
+- Saved outputs:
+  - CSVs: results/dataloader/chbmit/
+  - Tensors: results/tensors/chbmit/
+
+3) Models and Hyperparameters
+A) cnn_benchmark
+- Conv blocks: 16->32 (k=7), 32->64 (k=5), 64->128 (k=3)
+- Pool after each block, dropout, global average pooling + linear head
+- Typical run: base_channels=32, dropout=0.3
+
+B) eegnet
+- Temporal conv + depthwise spatial conv + separable refinement
+- Run params: F1=8, D=2, kernel_length=64, dropout=0.3
+
+C) cnn_improved
+- Higher-capacity residual/attention-style variant
+- Run params: base_channels=48, dropout=0.25
+- Reported trainable params: 425,563
+
+D) eegnet_improved
+- EEGNet variant with stronger feature capacity and adjusted temporal settings
+- Run params: F1=16, D=2, kernel_length=32, dropout=0.35
+- Reported trainable params: 4,257
+
+4) Training Setup
+- Loss: BCEWithLogitsLoss(pos_weight=n_neg/n_pos)
+- Optimizer: AdamW
+- Scheduler: ReduceLROnPlateau
+- Gradient clipping: 1.0
+- Epochs: 15
+- Device: CUDA (cuda:0)
+
+5) Captured Results (from terminal logs)
+A) cnn_benchmark (final test)
+- threshold: 0.04
+- accuracy: 0.59298
+- precision: 0.40499
+- recall: 0.76055
+- f1: 0.52854
+- specificity: 0.52117
+- tp/fp/tn/fn: 6991 / 10271 / 11179 / 2201
+
+B) eegnet (final test)
+- threshold: 0.27
+- accuracy: 0.52846
+- precision: 0.37728
+- recall: 0.87913
+- f1: 0.52798
+- specificity: 0.37818
+- tp/fp/tn/fn: 8081 / 13338 / 8112 / 1111
+
+C) eegnet_improved (final test)
+- threshold: 0.19
+- accuracy: 0.52967
+- precision: 0.36740
+- recall: 0.78677
+- f1: 0.50090
+- specificity: 0.41949
+- tp/fp/tn/fn: 7232 / 12452 / 8998 / 1960
+
+D) cnn_improved
+- Training output captured, but final full test metrics were not included in pasted logs.
+
+6) Interpretation
+- cnn_benchmark and eegnet reached similar final F1 (~0.528), with different operating behavior.
+- eegnet gives higher recall but much lower specificity (more false positives).
+- cnn_benchmark provides a more balanced precision/specificity profile.
+- eegnet_improved improved peak validation behavior but underperformed cnn_benchmark on final test F1 in captured run.
+
+7) Important Metric Caveat
+- AUROC and AUPRC were NaN in captured runs (likely sklearn metrics backend unavailable at runtime).
+- Install scikit-learn and rerun for valid primary metrics.
+
+8) Next Improvements Recommended
+- Keep balancing on train only; evaluate val/test on natural prevalence.
+- Add focal loss option (gamma=2, alpha=0.25).
+- Add early stopping on val AUPRC and checkpointing.
+- Add OneCycleLR scheduler variant.
+- Run full ablation: cnn_benchmark vs cnn_improved vs eegnet vs eegnet_improved under identical seeds.

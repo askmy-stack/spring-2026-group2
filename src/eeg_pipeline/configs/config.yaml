@@ -1,24 +1,23 @@
 # src/configs/config.yaml  (EEG pipeline config)
 
 run:
-  diagrams: true
-  preprocess: true
+  diagrams: false
+  preprocess: false
   eda: true
 
 dataset:
-  bids_root: "results/bids_dataset"
-
+  bids_root: "src/src/dataloader/results/bids_dataset/chbmit"
 bids:
   datatype: "eeg"
   suffix: "eeg"
   extension: ".edf"
 
-# NEW: window index produced by dataloader (already labeled)
+# NEW: window index produced by src (already labeled)
 dataloader_index:
   csv_paths:
-    - "results/dataloader/window_index_train.csv"
-    - "results/dataloader/window_index_val.csv"
-    - "results/dataloader/window_index_test.csv"
+    - "src/src/dataloader/results/dataloader/chbmit/window_index_train.csv"
+    - "src/src/dataloader/results/dataloader/chbmit/window_index_val.csv"
+    - "src/dataloader/results/dataloader/chbmit/window_index_test.csv"
   columns:
     path: "path"
     subject_id: "subject_id"
@@ -126,7 +125,7 @@ analysis:
       enabled: true
       pick_channel: null
       tmin: 0.0
-      tmax: 2.0
+      tmax: 0.99
       detrend: "constant"
       window: "hann"
       fmin: 0.5
@@ -134,7 +133,7 @@ analysis:
 
     # --- Morlet spectrogram (TFR) ---
     morlet:
-      enabled: true
+      enabled: false
       pick_channel: null
       aggregate: "none"
       fmin: 2.0
@@ -153,11 +152,12 @@ analysis:
       enabled: false
 
 export_cleaned:
-  enabled: true
+  enabled: false
   out_root: "results/preprocess/bids_dataset"
 
 
 eda:
+
   save_csv: true
   save_plots: true
   seconds_to_plot: 10.0
@@ -167,12 +167,12 @@ eda:
   save_psd_per_channel_csv: false
 
   recording_level:
-    enabled: true
-  window_level:
     enabled: false
+  window_level:
+    enabled: true
 
-  max_windows_total: 10
-  max_windows_per_subject: 20
+  max_windows_total: 0
+  max_windows_per_subject: 0
   only_label: null
 
 overview:

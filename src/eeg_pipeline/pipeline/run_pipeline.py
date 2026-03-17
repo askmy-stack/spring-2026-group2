@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import gc
 from pathlib import Path
 from typing import Any, Dict, Optional, List, Tuple
 import argparse
@@ -8,10 +9,11 @@ import argparse
 import numpy as np
 import pandas as pd
 
-# __file__ = .../spring-2026-group2/src/eeg_pipeline/pipeline/run_pipeline.py
-# parents[0]=pipeline, [1]=eeg_pipeline, [2]=src, [3]=spring-2026-group2 (repo root)
-REPO_ROOT = Path(__file__).resolve().parents[3]
+# __file__ = .../<repo>/src/src/eeg_pipeline/pipeline/run_pipeline.py
+# parents[4] is the actual repository root.
+REPO_ROOT = Path(__file__).resolve().parents[4]
 SRC_ROOT = REPO_ROOT / "src"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "configs" / "config.yaml"
 
 from eeg_pipeline.core.yaml_utils import load_yaml, get
 from eeg_pipeline.pipeline.preprocessor import EEGPreprocessor
@@ -34,20 +36,80 @@ def _resolve_path(repo_root: Path, p: str | Path) -> Path:
     return (repo_root / p).resolve()
 
 
+def _existing_path(candidates: List[Path]) -> Optional[Path]:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+    return None
+
+
+def _default_window_index_paths() -> List[str]:
+    filenames = [
+        "window_index_train.csv",
+        "window_index_val.csv",
+        "window_index_test.csv",
+    ]
+    candidate_roots = [
+        REPO_ROOT / "src" / "src" / "dataloader" / "results" / "dataloader" / "chbmit",
+        REPO_ROOT / "results" / "dataloader" / "chbmit",
+        REPO_ROOT / "results" / "src",
+    ]
+    for root in candidate_roots:
+        paths = [root / name for name in filenames]
+        if all(path.exists() for path in paths):
+            return [str(path.resolve()) for path in paths]
+    return [str((candidate_roots[0] / name).resolve()) for name in filenames]
+
+
+def _default_bids_root() -> Path:
+    candidates = [
+        REPO_ROOT / "src" / "src" / "dataloader" / "results" / "bids_dataset" / "chbmit",
+        REPO_ROOT / "results" / "bids_dataset" / "chbmit",
+        REPO_ROOT / "results" / "bids_dataset",
+    ]
+    existing = _existing_path(candidates)
+    return existing or candidates[0]
+
+
+def _candidate_bids_roots(configured_root: Optional[str]) -> List[Path]:
+    candidates: List[Path] = []
+    if configured_root:
+        configured = Path(configured_root)
+        candidates.append(configured if configured.is_absolute() else _resolve_path(REPO_ROOT, configured))
+
+        # Backward-compatible fallback for configs written relative to /src instead of repo root.
+        if not configured.is_absolute():
+            candidates.append((SRC_ROOT / configured).resolve())
+
+    candidates.extend(
+        [
+            REPO_ROOT / "src" / "src" / "dataloader" / "results" / "bids_dataset" / "chbmit",
+            REPO_ROOT / "src" / "dataloader" / "results" / "bids_dataset" / "chbmit",
+            REPO_ROOT / "results" / "bids_dataset" / "chbmit",
+            REPO_ROOT / "results" / "bids_dataset",
+        ]
+    )
+
+    deduped: List[Path] = []
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate not in seen:
+            deduped.append(candidate)
+            seen.add(candidate)
+    return deduped
+
+
 def _load_window_index(cfg: Dict[str, Any]) -> pd.DataFrame:
     """
-    Loads and concatenates dataloader window index CSVs.
+    Loads and concatenates src window index CSVs.
     Expected columns:
       path, subject_id, start_sec, end_sec, label, age, sex
     """
     idx_cfg = get(cfg, "dataloader_index", {}) or {}
     paths = idx_cfg.get("csv_paths", [])
     if not paths:
-        paths = [
-            "results/dataloader/window_index_train.csv",
-            "results/dataloader/window_index_val.csv",
-            "results/dataloader/window_index_test.csv",
-        ]
+        paths = _default_window_index_paths()
 
     cols_cfg = idx_cfg.get("columns", {}) or {}
     col_path = cols_cfg.get("path", "path")
@@ -60,7 +122,8 @@ def _load_window_index(cfg: Dict[str, Any]) -> pd.DataFrame:
 
     dfs = []
     for rel in paths:
-        p = _resolve_path(REPO_ROOT, rel)
+        p = Path(rel)
+        p = p if p.is_absolute() else _resolve_path(REPO_ROOT, p)
         if not p.exists():
             raise FileNotFoundError(f"Window index CSV not found: {p}")
         df = pd.read_csv(p)
@@ -140,16 +203,43 @@ def _infer_subject_id_from_path(p: Path) -> str:
     return "sub-unknown"
 
 
+def _extract_bids_entities_from_path(p: Path) -> Dict[str, Optional[str]]:
+    entities: Dict[str, Optional[str]] = {"subject": None, "session": None, "task": None, "run": None}
+
+    for part in p.parts:
+        if part.startswith("sub-"):
+            entities["subject"] = part.replace("sub-", "", 1)
+        elif part.startswith("ses-"):
+            entities["session"] = part.replace("ses-", "", 1)
+
+    for token in p.stem.split("_"):
+        if token.startswith("sub-"):
+            entities["subject"] = token.replace("sub-", "", 1)
+        elif token.startswith("ses-"):
+            entities["session"] = token.replace("ses-", "", 1)
+        elif token.startswith("task-"):
+            entities["task"] = token.replace("task-", "", 1)
+        elif token.startswith("run-"):
+            entities["run"] = token.replace("run-", "", 1)
+
+    return entities
+
+
 def _scan_bids_recordings(cfg: Dict[str, Any]) -> List[Tuple[str, Path]]:
     """
     Returns list of (subject_id, absolute_edf_path) discovered under dataset.bids_root.
     """
-    bids_root = _resolve_path(REPO_ROOT, get(cfg, "dataset.bids_root", "results/bids_dataset"))
+    configured_root = get(cfg, "dataset.bids_root", None)
+    root_candidates = _candidate_bids_roots(configured_root)
+    bids_root = _existing_path(root_candidates)
     ext = str(get(cfg, "bids.extension", ".edf"))
     ext = ext if ext.startswith(".") else f".{ext}"
 
-    if not bids_root.exists():
-        raise FileNotFoundError(f"BIDS root not found: {bids_root}")
+    if bids_root is None or not bids_root.exists():
+        raise FileNotFoundError(
+            "BIDS root not found. "
+            f"Checked config path={configured_root!r} and candidates={root_candidates}."
+        )
 
     # scan all EDFs under root (covers eeg folder structure variations)
     edfs = sorted(bids_root.rglob(f"sub-*/**/eeg/*{ext}"))
@@ -245,11 +335,7 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
                 break
 
             import mne
-            key = str(abs_path)
-            if key not in raw_cache:
-                raw_full = mne.io.read_raw_edf(abs_path, preload=True, verbose=False)
-                raw_cache[key] = raw_full
-            raw_full = raw_cache[key]
+            raw_full = mne.io.read_raw_edf(abs_path, preload=True, verbose=False)
 
             # overview recording metadata
             if overview is not None:
@@ -287,11 +373,13 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
 
             # Export cleaned full recording (optional)
             if export_writer is not None:
+                bids_entities = _extract_bids_entities_from_path(abs_path)
                 export_writer.write_cleaned_raw(
                     cleaned,
-                    subject=subject_id.replace("sub-", "").replace("-", "").replace("_", ""),
-                    task="recording",
-                    run="01",
+                    subject=bids_entities["subject"] or subject_id,
+                    session=bids_entities["session"],
+                    task=bids_entities["task"] or "recording",
+                    run=bids_entities["run"],
                     datatype=get(cfg, "bids.datatype", "eeg"),
                     suffix=get(cfg, "bids.suffix", "eeg"),
                     overwrite=True,
@@ -313,6 +401,15 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
             done += 1
 
             print(f"[OK][REC] {rec_id} steps={steps}")
+
+            # Recording mode does not benefit from caching; release large objects eagerly.
+            for obj in (raw_before, cleaned, raw_full):
+                try:
+                    obj.close()
+                except Exception:
+                    pass
+            del raw_before, cleaned, raw_full
+            gc.collect()
 
         # finalize overview
         if overview is not None:
@@ -370,7 +467,9 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
         import mne
         key = str(p.resolve())
         if key not in raw_cache:
-            raw_full = mne.io.read_raw_edf(p, preload=True, verbose=False)
+            # Window mode already works from the dataloader's preprocessed BIDS EDFs.
+            # Keep recordings lazy in memory and load only the cropped window.
+            raw_full = mne.io.read_raw_edf(p, preload=False, verbose=False)
             raw_cache[key] = raw_full
 
             if overview is not None:
@@ -385,7 +484,7 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
         raw_full = raw_cache[key]
 
         # Crop window
-        raw_win = raw_full.copy().crop(tmin=start, tmax=end, include_tmax=False)
+        raw_win = raw_full.copy().crop(tmin=start, tmax=end, include_tmax=False).load_data()
         raw_before = raw_win.copy()
 
         # Preprocess window
@@ -393,7 +492,7 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
             cleaned, steps = pre.process(
                 raw_win,
                 do_load=True,
-                do_resample=False,  # already done in dataloader
+                do_resample=False,  # already done in src
                 do_reref=do_reref,
                 do_filter=do_filter,
             )
@@ -401,7 +500,7 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
                 cleaned = td.apply_ica(cleaned)
                 steps.append("ica")
         else:
-            cleaned, steps = raw_win, ["preprocess_skipped"]
+            cleaned, steps = raw_win.copy(), ["preprocess_skipped_dataloader_already_processed"]
 
         # QC + bads + interpolate
         qc = td.qc(cleaned) if qc_enabled else {}
@@ -487,7 +586,7 @@ def run_from_dataloader_index(cfg: Dict[str, Any]) -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="src/configs/config.yaml")
+    ap.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     args = ap.parse_args()
 
     cfg = load_yaml(args.config)

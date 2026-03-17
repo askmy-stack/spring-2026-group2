@@ -1,22 +1,26 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Callable
+from typing import Dict, Type
 
-from eeg_pipeline.models.eegnet import EEGNet
+from .cnn_benchmark import CNNBenchmark1D
+from .cnn_improved import CNNImproved1D
+from .cnn_mixture import CNNMixture1D
+from .cnn_multiscale import CNNMultiScale1D
+from .eegnet import EEGNet
+from .eegnet_improved import EEGNetImproved
 
-_MODEL_BUILDERS: Dict[str, Callable[..., object]] = {
+MODEL_REGISTRY: Dict[str, Type] = {
+    "cnn_benchmark": CNNBenchmark1D,
+    "cnn_improved": CNNImproved1D,
+    "cnn_mixture": CNNMixture1D,
+    "cnn_multiscale": CNNMultiScale1D,
     "eegnet": EEGNet,
-    # add later:
-    # "tcn": TCN,
-    # "resnet1d": ResNet1D,
+    "eegnet_improved": EEGNetImproved,
 }
 
 
-def get_model(name: str, **kwargs: Any):
-    """
-    Create a model by name, e.g. get_model("eegnet", n_ch=16, n_samples=1024, ...)
-    """
-    key = name.strip().lower()
-    if key not in _MODEL_BUILDERS:
-        raise ValueError(f"Unknown model '{name}'. Available: {sorted(_MODEL_BUILDERS.keys())}")
-    return _MODEL_BUILDERS[key](**kwargs)
+def get_model(name: str, **kwargs):
+    name = name.lower().strip()
+    if name not in MODEL_REGISTRY:
+        raise ValueError(f"Unknown model '{name}'. Available: {list(MODEL_REGISTRY.keys())}")
+    return MODEL_REGISTRY[name](**kwargs)

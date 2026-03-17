@@ -1,0 +1,310 @@
+# ══════════════════════════════════════════════════════════════
+# EEG Seizure Detection Pipeline — Configuration
+# ══════════════════════════════════════════════════════════════
+#
+# Single source of truth for ALL pipeline parameters.
+# No values are hardcoded in source code — everything reads from here.
+#
+# To use custom/local EEG data:
+#   1. Add a new entry under `datasets:` with your dataset name
+#   2. Set `url:` to the download URL (or leave empty for local data)
+#   3. Set `raw_cache:` to the folder containing your EDF files
+#   4. Run: python main_loader.py --dataset <your_name> --generate
+#
+
+
+# ── Paths ────────────────────────────────────────────────────
+# All paths are relative to src/ unless absolute.
+# Change these to point at your own data or output locations.
+
+paths:
+  raw_root: "/home/ubuntu/data/chbmit"
+  results_root: "results"
+  csv_dir: "results/dataloader"
+  tensor_dir: "results/tensors"
+  bids_root: "results/bids_dataset"
+
+
+# ── Signal Processing ────────────────────────────────────────
+
+signal:
+  target_sfreq: 256              # Resample all recordings to this Hz
+  bandpass: [1.0, 50.0]          # Bandpass filter range [low, high] Hz
+  notch: 60.0                    # Default notch filter (overridden per dataset)
+  reference: "average"           # EEG re-reference method
+  reject_threshold: null         # Amplitude rejection threshold (null = disabled)
+  normalize: "zscore"            # Per-channel normalization method
+
+
+# ── Resampling ───────────────────────────────────────────────
+
+resampling:
+  default_method: "polyphase"
+  augment_on_ingestion: false
+
+
+# ── Channels ─────────────────────────────────────────────────
+
+channels:
+  target_count: 16
+  policy: "spatial_selection"
+  standard_set:
+    - "Fp1"
+    - "Fp2"
+    - "F3"
+    - "F4"
+    - "F7"
+    - "F8"
+    - "Fz"
+    - "Cz"
+    - "T7"
+    - "T8"
+    - "P7"
+    - "P8"
+    - "C3"
+    - "C4"
+    - "O1"
+    - "O2"
+  interpolation:
+    enable: true
+    method: "spherical_spline"
+    min_channels_required: 4
+
+
+# ── Windowing ────────────────────────────────────────────────
+
+windowing:
+  enable: true
+  window_sec: 1.0                # Window duration in seconds
+  stride_sec: 1.0                # Stride between windows in seconds
+  label_mode: "event"
+  exclude_near_seizure_sec: 300  # Skip background windows within N sec of seizures
+  max_background_per_file: 150   # Cap background windows per EDF (0 = no cap)
+                                 # Seizure windows are NEVER capped.
+
+
+# ── Labeling ─────────────────────────────────────────────────
+
+labeling:
+  mode: "binary"                 # "binary" (0/1) or "multiclass"
+  overlap_threshold: 0.5         # Min overlap fraction to label window as seizure
+  seizure_keywords:
+    - "seizure"
+    - "sz"
+    - "ictal"
+    - "epilep"
+  seizure_types:                 # For future multiclass support
+    background: 0
+    unknown: 1
+    focal: 2
+    generalized: 3
+    absence: 4
+    tonic_clonic: 5
+
+
+# ── Balance ──────────────────────────────────────────────────
+
+balance:
+  enable: true
+  seizure_ratio: 0.3             # Target seizure fraction after oversampling
+  method: "oversample"
+  seed: 42
+
+
+# ── Split ────────────────────────────────────────────────────
+
+split:
+  policy: "subject_independent"  # No subject appears in multiple splits
+  train: 0.70
+  val: 0.15
+  test: 0.15
+  seed: 42
+
+
+# ── Stratification ───────────────────────────────────────────
+
+stratification:
+  enable: true
+  age_bins: [0, 5, 10, 15, 20, 30, 100]
+  age_bin_labels: ["0-5", "5-10", "10-15", "15-20", "20-30", "30+"]
+  sex_categories: ["M", "F", "unknown"]
+  min_subjects_per_stratum: 1
+
+
+# ── Caching ──────────────────────────────────────────────────
+
+caching:
+  enable: true
+  max_memory_mb: 4096
+  disk_cache_dir: "results/cache"
+  use_dask: true
+
+
+# ── Metadata Defaults ────────────────────────────────────────
+# Fallback values when metadata cannot be parsed from source files.
+
+metadata:
+  defaults:
+    age: "NA"
+    sex: "NA"
+    sfreq: 256
+    task: "eeg"
+    institution: "NA"
+    manufacturer: "NA"
+    model: "NA"
+    software_version: "NA"
+    recording_type: "continuous"
+  search_companion_files: true
+  companion_extensions: [".json", ".yaml", ".yml", ".txt", ".meta"]
+  parse_filename: true
+  filename_patterns:
+    age: "_?age?_?(\\d+)"
+    sex: "_?(male|female|m|f)_?"
+    sfreq: "_?(sf|sfreq|hz)?_?(\\d+)hz?"
+
+
+# ── BIDS ─────────────────────────────────────────────────────
+
+bids:
+  fill_missing_with_na: true
+  version: "1.7.0"
+  task_name: "eeg"
+  write_sidecar: true
+  write_events: true
+  write_channels_tsv: true
+  write_participants_tsv: true
+
+
+# ── PyTorch ──────────────────────────────────────────────────
+
+pytorch:
+  batch_size: 64
+  num_workers: 0
+  pin_memory: true
+  shuffle_train: true
+  drop_last: false
+  prefetch_factor: 2
+  persistent_workers: false
+
+
+# ── Augmentation ─────────────────────────────────────────────
+
+augmentation:
+  enable: true
+  train_only: true
+  seizure_prob: 0.8
+  background_prob: 0.3
+  time_warp:
+    enable: true
+    sigma: 0.15
+  magnitude_scale:
+    enable: true
+    sigma: 0.15
+  add_noise:
+    enable: true
+    snr_db: 25
+  time_shift:
+    enable: true
+    max_samples: 15
+
+
+# ── System ───────────────────────────────────────────────────
+
+system:
+  n_jobs: -1
+  log_level: "INFO"
+  show_progress: true
+  random_seed: 42
+
+
+# ── Export ────────────────────────────────────────────────────
+
+export:
+  save_metadata_json: true
+  generate_summary: true
+  save_indices: true
+  metadata_dir: "results/dataloader/metadata"
+  reports_dir: "results/reports"
+
+
+# ── Validation ───────────────────────────────────────────────
+
+validation:
+  verify_on_load: false
+  num_samples_to_verify: 10
+  checks:
+    check_nans: true
+    check_infs: true
+    check_range: true
+    check_shape: true
+  auto_fix:
+    remove_nans: false
+    clip_extreme_values: false
+
+
+# ══════════════════════════════════════════════════════════════
+# DATASETS — one entry per supported dataset
+# ══════════════════════════════════════════════════════════════
+#
+# Each entry provides dataset-specific parameters that override
+# the global defaults above. The loader reads these at runtime.
+#
+# To add a new dataset:
+#   1. Copy any existing entry
+#   2. Change the key, url, raw_cache, and signal params
+#   3. Run: python main_loader.py --dataset <key> --generate
+#
+# For local EDF files (no download needed):
+#   - Set url: ""  (empty string)
+#   - Set raw_cache: "/absolute/path/to/your/edf/folder"
+#   - Organize as: raw_cache/<subject_id>/*.edf
+#
+# For URL download:
+#   - Set url: to the base URL of the dataset
+#   - Files will be downloaded to raw_cache/
+datasets:
+  chbmit:
+    name: "CHB-MIT Scalp EEG"
+    url: ""
+    native_sfreq: 256.0
+    notch_freq: 60.0
+    population: "pediatric"
+    raw_cache: "/home/ubuntu/data/chbmit"
+    subject_prefix: "chb"
+
+  siena:
+    name: "Siena Scalp EEG"
+    url: ""
+    native_sfreq: 512.0
+    notch_freq: 50.0
+    population: "adult"
+    raw_cache: "/home/ubuntu/data/siena"
+    subject_prefix: "PN"
+
+  # ── Example: Custom local dataset ──────────────────────────
+  # Uncomment and edit to use your own EDF files:
+  #
+  # my_dataset:
+  #   name: "My Custom EEG Data"
+  #   url: ""                       # Empty = skip download, use local files
+  #   native_sfreq: 256.0           # Original sampling rate of your recordings
+  #   notch_freq: 60.0              # Power line frequency (60 Hz US, 50 Hz EU)
+  #   population: "unknown"
+  #   raw_cache: "/path/to/my/edf/files"    # Folder structure: raw_cache/<subject_id>/*.edf
+  #   subject_prefix: "sub"         # Common prefix for subject folder names
+  #   description: "My custom EEG dataset"
+  #   annotations_file: ""          # Optional: path to seizure annotations CSV
+  #                                 # CSV columns: file, start_sec, end_sec
+
+  # ── Example: URL download ──────────────────────────────────
+  # For any PhysioNet or public EEG dataset:
+  #
+  # tuh_eeg:
+  #   name: "TUH EEG Seizure Corpus"
+  #   url: "https://isip.piconepress.com/projects/tuh_eeg"
+  #   native_sfreq: 250.0
+  #   notch_freq: 60.0
+  #   population: "mixed"
+  #   raw_cache: "data/raw/tuh"
+  #   subject_prefix: "sub"
+  #   description: "Largest public seizure corpus"
