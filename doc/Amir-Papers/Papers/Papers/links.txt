@@ -1,0 +1,7 @@
+neurolm:
+
+https://github.com/935963004/NeuroLM?tab=readme-ov-file
+https://liner.com/review/neurolm-a-universal-multitask-foundation-model-for-bridging-the-gap
+
+reve:
+https://huggingface.co/brain-bzh/reve-large/tree/main
