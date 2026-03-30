@@ -152,7 +152,12 @@ def _process_edf(
     ch_names = raw.ch_names
     name_map = {}
     for ch in ch_names:
-        clean = ch.split("-")[0].strip().upper()
+        # Strip reference suffix (e.g. "EEG Fp1-Ref" → "EEG Fp1", "Fp1-REF" → "Fp1")
+        clean = ch.split("-")[0].strip()
+        # Strip dataset prefix (e.g. "EEG Fp1" → "Fp1")
+        if " " in clean:
+            clean = clean.split()[-1]
+        clean = clean.upper()
         # Match to target
         for target in TARGET_CHANNELS:
             if clean == target.upper():
