@@ -1,0 +1,85 @@
+# =========================
+# Window index paths
+# =========================
+window_index:
+  train_csv: "results/dataloader/window_index_train.csv"
+  val_csv: "results/dataloader/window_index_val.csv"
+  test_csv: "results/dataloader/window_index_test.csv"
+
+# =========================
+# Output
+# =========================
+io:
+  output_dir: "results/features_raw"
+  format: "csv"#chnage to parquet if need
+
+# =========================
+# Limits
+# =========================
+limits:
+  max_files: null
+  max_windows: null
+
+# =========================
+# Feature extraction settings
+# =========================
+fe:
+  sfreq_mode: "auto"
+  target_sfreq: 256
+
+  time:
+    mean: true
+    std: true
+    var: true
+    min: true
+    max: true
+    range: true
+    rms: true
+    skew: true
+    kurtosis: true
+    line_length: true
+    zero_crossing_rate: true
+    hjorth: true
+
+  nonlinear:
+    sample_entropy: true
+    sampen_m: 2
+    sampen_r: 0.2
+
+    perm_entropy: true
+    perm_order: 3
+    perm_delay: 1
+
+  frequency:
+    bandpower: true
+    relative_power: true
+    spectral_entropy: true
+    fft_dominant_freq: true
+
+    bands:
+      delta: [0.5, 4]
+      theta: [4, 8]
+      alpha: [8, 13]
+      beta:  [13, 30]
+      gamma: [30, 45]
+
+    welch:
+      nperseg_sec: 1.0
+      fmin: 0.5
+      fmax: 45.0
+
+    fft:
+      fmin: 0.5
+      fmax: 45.0
+      detrend: true
+      window: true
+
+  wavelet:
+    enabled: true
+    wavelet: "db4"
+    level: 3
+    entropy: true
+window_index:
+  train_csv: "/home/ubuntu/capstone_repo_dataloader/results/dataloader/window_index_train.csv"
+  val_csv: "/home/ubuntu/capstone_repo_dataloader/results/dataloader/window_index_val.csv"
+  test_csv: "/home/ubuntu/capstone_repo_dataloader/results/dataloader/window_index_test.csv"
