@@ -1,0 +1,31 @@
+{
+  "dataset": "chbmit",
+  "model": "cnn_mixture",
+  "epochs_requested": 15,
+  "batch_size": 64,
+  "lr": 0.0003,
+  "weight_decay": 0.01,
+  "seed": 42,
+  "device": "cuda:0",
+  "loss": "bce",
+  "scheduler": "plateau",
+  "dropout": 0.25,
+  "base_channels": 32,
+  "F1": 8,
+  "D": 2,
+  "kernel_length": 64,
+  "final_test": {
+    "threshold": 0.0,
+    "auroc": 0.68697869942648,
+    "auprc": 0.44338192816433214,
+    "accuracy": 0.29998041903270023,
+    "precision": 0.29998041903270023,
+    "recall": 1.0,
+    "f1": 0.4615152884470553,
+    "specificity": 0.0,
+    "tp": 9192,
+    "fp": 21450,
+    "tn": 0,
+    "fn": 0
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "dataset": "chbmit",
+  "model": "eegnet_improved",
+  "epochs_requested": 25,
+  "batch_size": 64,
+  "lr": 0.0003,
+  "weight_decay": 0.01,
+  "seed": 42,
+  "device": "cuda:0",
+  "loss": "focal",
+  "scheduler": "onecycle",
+  "dropout": 0.3,
+  "base_channels": 32,
+  "F1": 16,
+  "D": 2,
+  "kernel_length": 32,
+  "final_test": {
+    "threshold": 0.44,
+    "auroc": 0.6907829195753477,
+    "auprc": 0.4997849516138777,
+    "accuracy": 0.6042686508713531,
+    "precision": 0.40782860015079164,
+    "recall": 0.7061575282854656,
+    "f1": 0.5170463597259837,
+    "specificity": 0.5606060606060606,
+    "tp": 6491,
+    "fp": 9425,
+    "tn": 12025,
+    "fn": 2701
+  }
+}

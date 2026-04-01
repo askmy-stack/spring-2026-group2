@@ -1,0 +1,42 @@
+# Example config for model.train.train_benchmark
+# Usage:
+#   cd ~/EEG_SEIZURE_DETECTION/src/src/dataloader
+#   PYTHONPATH=.. python3 -m model.train.train_benchmark \
+#     --config ../model/train/configs/config.yaml
+
+dataset: chbmit
+model: eegnet_improved
+device: cuda:0
+seed: 42
+
+training:
+  batch_size: 64
+  epochs: 25
+  early_stop_patience: 8
+  early_stop_min_delta: 0.0001
+
+optimizer:
+  lr: 0.0003
+  weight_decay: 0.01
+
+loss:
+  loss: focal
+  focal_gamma: 2.0
+  focal_alpha: 0.50
+
+scheduler:
+  scheduler: onecycle
+
+model:
+  dropout: 0.30
+  base_channels: 32
+  F1: 16
+  D: 2
+  kernel_length: 32
+
+output:
+  save_metrics: true
+  # Optional override; leave empty to use default model/results/benchmark_metrics
+  metrics_out: ""
+  metrics_dir: ""
+

@@ -1,0 +1,31 @@
+{
+  "dataset": "chbmit",
+  "model": "cnn_multiscale",
+  "epochs_requested": 15,
+  "batch_size": 64,
+  "lr": 0.0003,
+  "weight_decay": 0.01,
+  "seed": 42,
+  "device": "cuda:0",
+  "loss": "bce",
+  "scheduler": "plateau",
+  "dropout": 0.25,
+  "base_channels": 32,
+  "F1": 8,
+  "D": 2,
+  "kernel_length": 64,
+  "final_test": {
+    "threshold": 0.08,
+    "auroc": 0.729084472968285,
+    "auprc": 0.5088459348934379,
+    "accuracy": 0.6236864434436394,
+    "precision": 0.4298145592030247,
+    "recall": 0.7791557876414273,
+    "f1": 0.5540127634886869,
+    "specificity": 0.5570629370629371,
+    "tp": 7162,
+    "fp": 9501,
+    "tn": 11949,
+    "fn": 2030
+  }
+}

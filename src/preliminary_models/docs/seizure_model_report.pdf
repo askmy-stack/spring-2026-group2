@@ -1,0 +1,258 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 3 /Kids [3 0 R 5 0 R 7 0 R] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<< /Length 2486 >>
+stream
+BT
+/F1 10 Tf
+48 744 Td
+(# EEG Seizure Detection Model Report \(CHB-MIT, 16x256\)) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## Abstract) Tj
+0 -14 Td
+(This report summarizes the EEG seizure detection pipeline and model experiments on CHB-MIT using) Tj
+0 -14 Td
+(1-second windows \(`16 channels x 256 samples`\). We compared CNN and EEGNet baselines plus improved) Tj
+0 -14 Td
+(variants. The processed dataset produced subject-independent train/val/test tensors with balancing) Tj
+0 -14 Td
+(to 30% seizure in each split. In captured runs, `cnn_benchmark` and `eegnet` achieved similar final) Tj
+0 -14 Td
+(test F1 \(~0.528\), while `cnn_improved` and `eegnet_improved` showed different precision-recall) Tj
+0 -14 Td
+(tradeoffs. AUROC/AUPRC were `nan` in logs and should be recomputed after fixing metric) Tj
+0 -14 Td
+(dependency/runtime.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## 1. Objective) Tj
+0 -14 Td
+(- Build strong CNN-based baselines for binary seizure detection.) Tj
+0 -14 Td
+(- Standardized input: `\(B, 16, 256\)` EEG windows.) Tj
+0 -14 Td
+(- Evaluate with threshold-tuned and fixed-threshold metrics.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## 2. Data and Pipeline) Tj
+0 -14 Td
+(- Window size: `1.0s`) Tj
+0 -14 Td
+(- Sampling rate: `256 Hz`) Tj
+0 -14 Td
+(- Channels: `16`) Tj
+0 -14 Td
+(- Stride: `1.0s`) Tj
+0 -14 Td
+(- Subject-independent split) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### Generated Data Summary) Tj
+0 -14 Td
+(- Total windows \(pre-balance\): `114,511`) Tj
+0 -14 Td
+(- Seizure windows \(pre-balance\): `11,611` \(`10.1%`\)) Tj
+0 -14 Td
+(- Train: `96,857` \(`30.0%` seizure\)) Tj
+0 -14 Td
+(- Val: `19,500` \(`30.0%` seizure\)) Tj
+0 -14 Td
+(- Test: `30,642` \(`30.0%` seizure\)) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Output locations:) Tj
+0 -14 Td
+(- CSV index files: `results/dataloader/chbmit/`) Tj
+0 -14 Td
+(- Tensor files: `results/tensors/chbmit/`) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## 3. Models Implemented) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### 3.1 CNN Benchmark \(`cnn_benchmark`\)) Tj
+0 -14 Td
+(- 1D temporal CNN) Tj
+0 -14 Td
+(- Conv stack: `16->32 \(k=7\)`, `32->64 \(k=5\)`, `64->128 \(k=3\)`) Tj
+0 -14 Td
+(- Pooling after each block) Tj
+0 -14 Td
+(- Dropout regularization) Tj
+0 -14 Td
+(- Adaptive global average pooling + linear output head) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### 3.2 EEGNet Baseline \(`eegnet`\)) Tj
+0 -14 Td
+(- Temporal filtering conv) Tj
+0 -14 Td
+(- Depthwise spatial conv across channels) Tj
+0 -14 Td
+(- Separable temporal refinement) Tj
+0 -14 Td
+(- Compact EEG-specific architecture) Tj
+0 -14 Td
+() Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 2837 >>
+stream
+BT
+/F1 10 Tf
+48 744 Td
+(### 3.3 CNN Improved \(`cnn_improved`\)) Tj
+0 -14 Td
+(- Residual-style 1D CNN with attention-like improvements) Tj
+0 -14 Td
+(- Run config: `base_channels=48`, `dropout=0.25`) Tj
+0 -14 Td
+(- Trainable parameters \(logged\): `425,563`) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(### 3.4 EEGNet Improved \(`eegnet_improved`\)) Tj
+0 -14 Td
+(- Higher feature capacity and tuned temporal settings) Tj
+0 -14 Td
+(- Run config: `F1=16`, `D=2`, `kernel_length=32`) Tj
+0 -14 Td
+(- Trainable parameters \(logged\): `4,257`) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## 4. Training Setup) Tj
+0 -14 Td
+(- Loss: `BCEWithLogitsLoss\(pos_weight=n_neg/n_pos\)`) Tj
+0 -14 Td
+(- Optimizer: `AdamW`) Tj
+0 -14 Td
+(- LR scheduler: `ReduceLROnPlateau`) Tj
+0 -14 Td
+(- Gradient clipping: `1.0`) Tj
+0 -14 Td
+(- Epochs: `15`) Tj
+0 -14 Td
+(- Device: `cuda:0`) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## 5. Final Test Metrics \(Captured\)) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(| Model | Threshold | Accuracy | Precision | Recall | F1 | Specificity |) Tj
+0 -14 Td
+(|---|---:|---:|---:|---:|---:|---:|) Tj
+0 -14 Td
+(| `cnn_benchmark` | 0.04 | 0.59298 | 0.40499 | 0.76055 | 0.52854 | 0.52117 |) Tj
+0 -14 Td
+(| `eegnet` | 0.27 | 0.52846 | 0.37728 | 0.87913 | 0.52798 | 0.37818 |) Tj
+0 -14 Td
+(| `cnn_improved` | 0.04 | 0.51671 | 0.35385 | 0.73977 | 0.47872 | 0.42112 |) Tj
+0 -14 Td
+(| `eegnet_improved` | 0.19 | 0.52967 | 0.36740 | 0.78677 | 0.50090 | 0.41949 |) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(Additional confusion counts from logs:) Tj
+0 -14 Td
+(- `cnn_benchmark`: TP 6991, FP 10271, TN 11179, FN 2201) Tj
+0 -14 Td
+(- `eegnet`: TP 8081, FP 13338, TN 8112, FN 1111) Tj
+0 -14 Td
+(- `cnn_improved`: TP 6800, FP 12417, TN 9033, FN 2392) Tj
+0 -14 Td
+(- `eegnet_improved`: TP 7232, FP 12452, TN 8998, FN 1960) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## 6. Interpretation) Tj
+0 -14 Td
+(- `cnn_benchmark` and `eegnet` delivered similar final F1, but with very different operating) Tj
+0 -14 Td
+(profiles.) Tj
+0 -14 Td
+(- `eegnet` achieved highest recall, but low specificity \(more false positives\).) Tj
+0 -14 Td
+(- `cnn_benchmark` gave better specificity and better overall balance.) Tj
+0 -14 Td
+(- `cnn_improved` underperformed `cnn_benchmark` in this run \(lower F1 and accuracy\).) Tj
+0 -14 Td
+(- `eegnet_improved` improved over `cnn_improved` F1, but did not exceed `cnn_benchmark`/`eegnet`) Tj
+0 -14 Td
+(baseline F1 in captured runs.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## 7. Metric Caveat) Tj
+0 -14 Td
+(AUROC and AUPRC were `nan` in logs. These primary metrics are currently invalid in recorded runs) Tj
+0 -14 Td
+(and must be recomputed after fixing runtime metric dependencies.) Tj
+0 -14 Td
+() Tj
+0 -14 Td
+(## 8. Recommended Next Steps) Tj
+0 -14 Td
+(1. Install/verify `scikit-learn` and rerun to recover valid AUROC/AUPRC.) Tj
+0 -14 Td
+(2. Keep balancing on train only; evaluate val/test at natural prevalence.) Tj
+ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 254 >>
+stream
+BT
+/F1 10 Tf
+48 744 Td
+(3. Add focal loss \(`gamma=2`, `alpha=0.25`\) and compare against BCE.) Tj
+0 -14 Td
+(4. Add early stopping and checkpointing on validation AUPRC.) Tj
+0 -14 Td
+(5. Run controlled ablation with fixed seed across all 4 models.) Tj
+ET
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000302 00000 n 
+0000002840 00000 n 
+0000003015 00000 n 
+0000005904 00000 n 
+0000006079 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+6384
+%%EOF
