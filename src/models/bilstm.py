@@ -19,12 +19,8 @@ class BiLSTM(nn.Module):
         num_classes: int = 1,
     ):
         super().__init__()
-        self.n_channels = n_channels
-        self.seq_len = seq_len
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.dropout_p = dropout
-        self.num_classes = num_classes
 
         self.lstm = nn.LSTM(
             input_size=n_channels,

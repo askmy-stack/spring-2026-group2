@@ -12,6 +12,15 @@ print("\n" + "="*60)
 print("REGULARIZED TRAINING")
 print("="*60)
 
+# Device
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+print(f"Device: {device}")
+
 # Load data
 X = torch.load('../results/tensors/chbmit/train/data.pt')
 y = torch.load('../results/tensors/chbmit/train/labels.pt')
@@ -40,15 +49,19 @@ for config in configs:
     print(f"Training: {config['name']}")
     print(f"{'='*60}")
     
+    n_channels = X.shape[1]
+    seq_len = X.shape[2]
     model = config['model'](
-        n_channels=16, seq_len=256, 
-        hidden_size=config['hidden'], 
-        num_layers=config['layers'], 
+        n_channels=n_channels, seq_len=seq_len,
+        hidden_size=config['hidden'],
+        num_layers=config['layers'],
         dropout=config['dropout']
-    )
-    
-    # Loss with class weighting
-    pos_weight = torch.tensor([float(len(y_train) - y_train.sum()) / y_train.sum()])
+    ).to(device)
+
+    # Loss with class weighting (guard against zero positive samples)
+    n_pos = y_train.sum().item()
+    n_neg = len(y_train) - n_pos
+    pos_weight = torch.tensor([n_neg / max(n_pos, 1)]).to(device)
     criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     
     # Optimizer with weight decay
@@ -63,8 +76,8 @@ for config in configs:
         # Train
         model.train()
         for X_b, y_b in train_loader:
-            X_b = X_b.to(dtype=torch.float32)
-            y_b = y_b.to(dtype=torch.float32).unsqueeze(1)
+            X_b = X_b.to(device, dtype=torch.float32)
+            y_b = y_b.to(device, dtype=torch.float32).unsqueeze(1)
             
             optimizer.zero_grad()
             loss = criterion(model(X_b), y_b)
@@ -80,15 +93,15 @@ for config in configs:
         
         with torch.no_grad():
             for X_b, y_b in val_loader:
-                X_b = X_b.to(dtype=torch.float32)
-                y_b = y_b.to(dtype=torch.float32).unsqueeze(1)
-                
+                X_b = X_b.to(device, dtype=torch.float32)
+                y_b = y_b.to(device, dtype=torch.float32).unsqueeze(1)
+
                 logits = model(X_b)
                 val_losses.append(criterion(logits, y_b).item())
-                
-                probs = torch.sigmoid(logits).numpy().flatten()
+
+                probs = torch.sigmoid(logits).cpu().numpy().flatten()
                 all_probs.extend(probs)
-                all_labels.extend(y_b.numpy().flatten())
+                all_labels.extend(y_b.cpu().numpy().flatten())
         
         val_loss = np.mean(val_losses)
         scheduler.step(val_loss)
