@@ -144,11 +144,11 @@ class CNNMultiScale1D(nn.Module):
         x0 = self.stem(x)
         y1 = self.inc1(x0)
         y2 = self.inc2(y1)
-        y2 = torch.silu(y2 + self.res1(x0))
+        y2 = torch.nn.functional.silu(y2 + self.res1(x0))
 
         y2d = self.down(y2)
         y3 = self.inc3(y2d)
         y4 = self.inc4(y3)
-        y4 = torch.silu(y4 + self.res2(y2d))
+        y4 = torch.nn.functional.silu(y4 + self.res2(y2d))
 
         return self.head(y4).squeeze(-1)
