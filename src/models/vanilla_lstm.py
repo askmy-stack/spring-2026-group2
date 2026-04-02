@@ -21,11 +21,8 @@ class VanillaLSTM(nn.Module):
     ):
         super().__init__()
         self.n_channels = n_channels
-        self.seq_len = seq_len
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.dropout_p = dropout
-        self.num_classes = num_classes
 
         # LSTM expects input shape: (batch, seq_len, input_size)
         # We treat time_steps as the sequence and channels as features

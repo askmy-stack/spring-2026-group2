@@ -20,16 +20,10 @@ class CNNLSTM(nn.Module):
         num_classes: int = 1,
         cnn_filters: int = 64,
         kernel_size: int = 7,
-        kernel_size2: int = 5,
         pool_size: int = 2,
     ):
         super().__init__()
-        self.n_channels = n_channels
-        self.seq_len = seq_len
         self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.dropout_p = dropout
-        self.num_classes = num_classes
 
         # --- CNN Feature Extractor ---
         # Input: (batch, channels, time_steps) - treat EEG channels as Conv1d channels
@@ -42,7 +36,7 @@ class CNNLSTM(nn.Module):
             nn.Dropout(dropout * 0.5),
 
             # Block 2
-            nn.Conv1d(cnn_filters, cnn_filters * 2, kernel_size=kernel_size2, padding=kernel_size2 // 2),
+            nn.Conv1d(cnn_filters, cnn_filters * 2, kernel_size=5, padding=2),
             nn.BatchNorm1d(cnn_filters * 2),
             nn.ReLU(),
             nn.MaxPool1d(pool_size),

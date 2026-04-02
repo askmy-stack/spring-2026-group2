@@ -23,9 +23,7 @@ from sklearn.metrics import (
     precision_score, recall_score, confusion_matrix,
     classification_report,
 )
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-from architectures import MODEL_REGISTRY
+from models import MODEL_REGISTRY
 
 
 # ======================== Config ========================
@@ -290,12 +288,11 @@ def main():
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=3
+        optimizer, mode="min", factor=0.5, patience=3, verbose=True
     )
 
     # Training loop with early stopping
     os.makedirs(args.save_dir, exist_ok=True)
-    ckpt_path = os.path.join(args.save_dir, f"{args.model}_best.pt")
     best_val_loss = float("inf")
     best_metrics = None
     patience_counter = 0
@@ -335,6 +332,7 @@ def main():
             patience_counter = 0
 
             # Save best model
+            ckpt_path = os.path.join(args.save_dir, f"{args.model}_best.pt")
             torch.save({
                 "epoch": epoch,
                 "model_state_dict": model.state_dict(),

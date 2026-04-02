@@ -51,12 +51,7 @@ class AttentionBiLSTM(nn.Module):
         num_classes: int = 1,
     ):
         super().__init__()
-        self.n_channels = n_channels
-        self.seq_len = seq_len
         self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.dropout_p = dropout
-        self.num_classes = num_classes
 
         self.lstm = nn.LSTM(
             input_size=n_channels,
@@ -72,15 +67,6 @@ class AttentionBiLSTM(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.fc = nn.Linear(hidden_size * 2, num_classes)
 
-    def _run(self, x):
-        """Shared forward logic used by both forward() and forward_with_attention()."""
-        x = x.permute(0, 2, 1)  # (batch, time_steps, channels)
-        lstm_out, _ = self.lstm(x)  # (batch, time_steps, hidden_size * 2)
-        context, attn_weights = self.attention(lstm_out)  # (batch, hidden_size * 2)
-        out = self.dropout(context)
-        logits = self.fc(out)
-        return logits, attn_weights
-
     def forward(self, x):
         """
         Args:
@@ -88,9 +74,22 @@ class AttentionBiLSTM(nn.Module):
         Returns:
             logits: (batch, 1)
         """
-        logits, _ = self._run(x)
+        x = x.permute(0, 2, 1)  # (batch, time_steps, channels)
+
+        lstm_out, _ = self.lstm(x)  # (batch, time_steps, hidden_size * 2)
+
+        # Attention-weighted context vector
+        context, attn_weights = self.attention(lstm_out)  # (batch, hidden_size * 2)
+
+        out = self.dropout(context)
+        logits = self.fc(out)
         return logits
 
     def forward_with_attention(self, x):
         """Same as forward but also returns attention weights for visualization."""
-        return self._run(x)
+        x = x.permute(0, 2, 1)
+        lstm_out, _ = self.lstm(x)
+        context, attn_weights = self.attention(lstm_out)
+        out = self.dropout(context)
+        logits = self.fc(out)
+        return logits, attn_weights

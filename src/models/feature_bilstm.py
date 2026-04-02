@@ -73,10 +73,7 @@ class FeatureBiLSTM(nn.Module):
             # Single window: (batch, n_features) -> (batch, 1, n_features)
             x = x.unsqueeze(1)
 
-        batch_size, actual_seq_len, n_feat = x.shape
-        assert n_feat == self.n_features, (
-            f"Expected {self.n_features} features, got {n_feat}"
-        )
+        batch_size, seq_len, n_feat = x.shape
 
         # Project features: (batch, seq_len, n_features) -> (batch, seq_len, hidden_size)
         x = self.feature_proj(x)
