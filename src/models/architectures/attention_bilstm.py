@@ -3,15 +3,14 @@ Attention-Based Bidirectional LSTM Classifier
 ================================================
 BiLSTM + learned attention weights over time steps.
 
-Improvements over original:
-- Replaced single-head Bahdanau attention with 4-head MultiheadAttention
-  (nn.MultiheadAttention) — head diversity captures different seizure patterns
-- Added pre-attention residual connection: attended + lstm_out (stabilises gradients)
-- Global avg-pool + max-pool over attended sequence (full context)
-- LayerNorm after pooled output
+Improvements (v2):
+- Learnable positional encoding: tells attention which timestep we're at
+  (seizure spikes position-dependent: onset in early steps, spread in late steps)
+- 4-head MultiheadAttention (replaced single Bahdanau)
+- Pre-attention residual: attended + lstm_out
+- Global avg+max pooling over attended sequence
+- Input LayerNorm + projection
 - 2-layer FC head with ReLU + dropout
-- Input LayerNorm + projection (matches VanillaLSTM / BiLSTM improvements)
-- forward_with_attention() preserved for interpretability / visualisation
 """
 
 import torch
@@ -30,11 +29,11 @@ class AttentionBiLSTM(nn.Module):
         num_heads: int = 4,
     ):
         super().__init__()
-        self.n_channels = n_channels
-        self.seq_len = seq_len
+        self.n_channels  = n_channels
+        self.seq_len     = seq_len
         self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.dropout_p = dropout
+        self.num_layers  = num_layers
+        self.dropout_p   = dropout
         self.num_classes = num_classes
 
         # Input normalisation + projection
@@ -56,8 +55,14 @@ class AttentionBiLSTM(nn.Module):
 
         lstm_out_size = hidden_size * 2  # bidirectional
 
+        # Learnable positional encoding: (1, seq_len, lstm_out_size)
+        # Tells attention the position of each timestep in the window
+        self.pos_embedding = nn.Parameter(
+            torch.zeros(1, seq_len, lstm_out_size)
+        )
+        nn.init.trunc_normal_(self.pos_embedding, std=0.02)
+
         # Multi-head self-attention over BiLSTM outputs
-        # embed_dim must be divisible by num_heads
         self.attention = nn.MultiheadAttention(
             embed_dim=lstm_out_size,
             num_heads=num_heads,
@@ -68,7 +73,7 @@ class AttentionBiLSTM(nn.Module):
 
         # avg-pool + max-pool -> lstm_out_size * 2
         self.pool_norm = nn.LayerNorm(lstm_out_size * 2)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout   = nn.Dropout(dropout)
 
         self.fc = nn.Sequential(
             nn.Linear(lstm_out_size * 2, hidden_size),
@@ -85,17 +90,21 @@ class AttentionBiLSTM(nn.Module):
 
         lstm_out, _ = self.lstm(x)  # (batch, time_steps, hidden_size * 2)
 
-        # Multi-head self-attention (query = key = value = lstm_out)
+        # Add learnable positional encoding
+        # Trim pos_embedding to actual sequence length in case of batch variance
+        pos_emb = self.pos_embedding[:, :lstm_out.size(1), :]
+        lstm_out = lstm_out + pos_emb
+
+        # Multi-head self-attention
         attended, attn_weights = self.attention(lstm_out, lstm_out, lstm_out)
-        # attn_weights: (batch, time_steps, time_steps)
 
         # Residual connection: keep both attended and raw LSTM context
         attended = self.attn_norm(attended + lstm_out)
 
-        # Global avg + max pooling over attended sequence
+        # Global avg + max pooling
         avg_pool = attended.mean(dim=1)
         max_pool = attended.max(dim=1).values
-        out = torch.cat([avg_pool, max_pool], dim=1)  # (batch, hidden_size * 4)
+        out = torch.cat([avg_pool, max_pool], dim=1)  # (batch, lstm_out_size * 2)
 
         out = self.pool_norm(out)
         out = self.dropout(out)
@@ -117,6 +126,6 @@ class AttentionBiLSTM(nn.Module):
 
         Returns:
             logits:       (batch, 1)
-            attn_weights: (batch, time_steps, time_steps)
+            attn_weights: (batch, num_heads, time_steps, time_steps)
         """
         return self._run(x)
