@@ -1,17 +1,15 @@
 """
 CNN-LSTM Hybrid Classifier
 ============================
-1D CNN extracts local spatial-temporal features from raw EEG,
-then BiLSTM captures sequential dependencies, followed by multi-head attention.
+3 PARALLEL multi-scale CNN branches extract features at different timescales,
+then BiLSTM + multi-head attention for seizure detection.
 
-Improvements over original:
-- 3rd CNN block (was 2) — deeper feature hierarchy
-- Replaced MaxPool1d with strided Conv1d — preserves learned features vs discarding
-- Residual skip connections in each CNN block (1x1 projection when dims change)
-- SE (Squeeze-and-Excitation) channel attention after each block — learns which
-  feature maps matter most, directly targeting seizure-discriminative frequencies
-- Global avg-pool + max-pool over LSTM timesteps (vs single final hidden state)
-- Multi-head self-attention (4 heads) over LSTM outputs before pooling
+Improvements (v2):
+- Parallel multi-scale CNN: kernel=3 (fast spikes), k=15 (spike-wave), k=31 (ictal rhythm)
+- Each branch: ConvBlock with SE channel attention + residual
+- Concatenate all branches, align temporal dims, feed to BiLSTM
+- Multi-head self-attention (4 heads) over LSTM outputs with residual
+- Global avg+max pooling
 - LayerNorm + 2-layer FC head
 """
 
@@ -21,12 +19,11 @@ import torch.nn as nn
 
 class SEBlock(nn.Module):
     """Squeeze-and-Excitation channel attention for 1D feature maps."""
-
     def __init__(self, channels: int, reduction: int = 8):
         super().__init__()
         self.se = nn.Sequential(
-            nn.AdaptiveAvgPool1d(1),           # (batch, C, 1)
-            nn.Flatten(),                       # (batch, C)
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
             nn.Linear(channels, max(channels // reduction, 4)),
             nn.ReLU(),
             nn.Linear(max(channels // reduction, 4), channels),
@@ -41,7 +38,6 @@ class SEBlock(nn.Module):
 
 class ConvBlock(nn.Module):
     """Conv1d block with BN, ReLU, strided downsampling, SE attention, and residual."""
-
     def __init__(
         self,
         in_ch: int,
@@ -89,27 +85,28 @@ class CNNLSTM(nn.Module):
         num_heads: int = 4,
     ):
         super().__init__()
-        self.n_channels = n_channels
-        self.seq_len = seq_len
+        self.n_channels  = n_channels
+        self.seq_len     = seq_len
         self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.dropout_p = dropout
+        self.num_layers  = num_layers
+        self.dropout_p   = dropout
         self.num_classes = num_classes
 
-        # --- CNN Feature Extractor (3 blocks, strided convolutions) ---
-        # Block 1: n_channels -> cnn_filters, stride=2 (256 -> ~128)
-        # Block 2: cnn_filters -> cnn_filters*2, stride=2 (~128 -> ~64)
-        # Block 3: cnn_filters*2 -> cnn_filters*2, stride=1 (refine, no downsample)
-        self.cnn = nn.Sequential(
-            ConvBlock(n_channels, cnn_filters, kernel_size=7, stride=2,
-                      dropout=dropout * 0.5),
-            ConvBlock(cnn_filters, cnn_filters * 2, kernel_size=5, stride=2,
-                      dropout=dropout * 0.5),
-            ConvBlock(cnn_filters * 2, cnn_filters * 2, kernel_size=3, stride=1,
-                      dropout=dropout * 0.5),
-        )
+        # --- 3 PARALLEL CNN branches at different scales ---
+        # Branch A: Fast (kernel=3) — captures spike transients
+        self.branch_a = ConvBlock(n_channels, 32, kernel_size=3, stride=2, dropout=dropout*0.5)
+        self.branch_a2 = ConvBlock(32, 32, kernel_size=3, stride=1, dropout=dropout*0.5)
 
-        cnn_out_features = cnn_filters * 2  # 128
+        # Branch B: Medium (kernel=15) — captures spike-wave complexes (~250ms)
+        self.branch_b = ConvBlock(n_channels, 64, kernel_size=15, stride=2, dropout=dropout*0.5)
+        self.branch_b2 = ConvBlock(64, 64, kernel_size=3, stride=1, dropout=dropout*0.5)
+
+        # Branch C: Slow (kernel=31) — captures ictal rhythm (~1s)
+        self.branch_c = ConvBlock(n_channels, 64, kernel_size=31, stride=1, dropout=dropout*0.5)
+        self.branch_c2 = ConvBlock(64, 64, kernel_size=3, stride=1, dropout=dropout*0.5)
+
+        # Total features after concatenation: 32 + 64 + 64 = 160
+        cnn_out_features = 32 + 64 + 64
 
         # --- BiLSTM Sequence Modeler ---
         self.lstm = nn.LSTM(
@@ -132,9 +129,9 @@ class CNNLSTM(nn.Module):
         )
         self.attn_norm = nn.LayerNorm(lstm_out_size)
 
-        # avg-pool + max-pool -> lstm_out_size * 2
+        # avg-pool + max-pool
         self.pool_norm = nn.LayerNorm(lstm_out_size * 2)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout   = nn.Dropout(dropout)
 
         self.fc = nn.Sequential(
             nn.Linear(lstm_out_size * 2, hidden_size),
@@ -150,25 +147,41 @@ class CNNLSTM(nn.Module):
         Returns:
             logits: (batch, 1)
         """
-        # CNN: (batch, n_channels, time_steps) -> (batch, cnn_filters*2, reduced_time)
-        cnn_out = self.cnn(x)
+        # --- Process 3 parallel branches ---
+        # Branch A
+        a = self.branch_a(x)   # (batch, 32, T/2)
+        a = self.branch_a2(a)  # (batch, 32, T/2)
 
-        # Reshape for LSTM: (batch, reduced_time, cnn_features)
-        cnn_out = cnn_out.permute(0, 2, 1)
+        # Branch B
+        b = self.branch_b(x)   # (batch, 64, T/2)
+        b = self.branch_b2(b)  # (batch, 64, T/2)
 
-        # BiLSTM: (batch, reduced_time, hidden_size * 2)
-        lstm_out, _ = self.lstm(cnn_out)
+        # Branch C (no initial stride)
+        c = self.branch_c(x)   # (batch, 64, T)
+        c = self.branch_c2(c)  # (batch, 64, T)
+
+        # Align temporal dimensions: reduce C to match A/B
+        # A, B are at T/2 after stride=2; C at T; downsample C by 2
+        c_pool = torch.nn.functional.max_pool1d(c, kernel_size=2, stride=2)  # (batch, 64, T/2)
+
+        # Concatenate: (batch, 32+64+64, T/2)
+        merged = torch.cat([a, b, c_pool], dim=1)
+
+        # Reshape for LSTM: (batch, T/2, 160)
+        merged = merged.permute(0, 2, 1)
+
+        # BiLSTM
+        lstm_out, _ = self.lstm(merged)  # (batch, T/2, hidden_size * 2)
 
         # Multi-head self-attention with residual
         attended, _ = self.attention(lstm_out, lstm_out, lstm_out)
         attended = self.attn_norm(attended + lstm_out)
 
-        # Global avg + max pooling over full sequence
+        # Global avg + max pooling
         avg_pool = attended.mean(dim=1)
         max_pool = attended.max(dim=1).values
         out = torch.cat([avg_pool, max_pool], dim=1)
 
         out = self.pool_norm(out)
         out = self.dropout(out)
-        logits = self.fc(out)
-        return logits
+        return self.fc(out)

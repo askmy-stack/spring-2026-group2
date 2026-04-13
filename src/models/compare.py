@@ -2,6 +2,8 @@
 compare.py - Model Comparison Framework
 ==========================================
 Trains all five LSTM architectures and generates a comparison report.
+Uses state-of-the-art improvements: Focal Loss, label smoothing, asymmetric FN weighting,
+learning rate warmup, AdamW + CosineAnnealing, Youden's J threshold.
 
 Usage:
     python compare.py --data_dir ./tensors/chb01 --epochs 30
@@ -15,13 +17,32 @@ import time
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
+from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     accuracy_score, f1_score, roc_auc_score,
-    precision_score, recall_score, confusion_matrix,
+    precision_score, recall_score, confusion_matrix, roc_curve,
 )
 from models import MODEL_REGISTRY
+
+
+class FocalLoss(nn.Module):
+    """Focal Loss for handling class imbalance.
+
+    Reduces loss for easy examples and focuses on hard examples.
+    FL(p_t) = -(1 - p_t)^gamma * log(p_t)
+    """
+    def __init__(self, gamma=2.0, pos_weight=None):
+        super().__init__()
+        self.gamma = gamma
+        self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction='none')
+
+    def forward(self, logits, targets):
+        bce_loss = self.bce(logits, targets)
+        probs = torch.sigmoid(logits)
+        pt = torch.where(targets == 1, probs, 1 - probs)
+        focal_weight = (1 - pt) ** self.gamma
+        return (focal_weight * bce_loss).mean()
 
 
 def parse_args():
@@ -31,6 +52,8 @@ def parse_args():
     parser.add_argument("--feature_dir", type=str, default=None,
                         help="Directory with feature tensors for feature_bilstm. "
                              "If not provided, feature_bilstm is skipped.")
+    parser.add_argument("--test_dir", type=str, default=None,
+                        help="Directory with test set tensors for final evaluation")
     parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=1e-3)
@@ -39,6 +62,14 @@ def parse_args():
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--patience", type=int, default=7)
     parser.add_argument("--val_split", type=float, default=0.2)
+    parser.add_argument("--focal_gamma", type=float, default=2.0,
+                        help="Focal loss gamma parameter (0=disabled, use standard BCE)")
+    parser.add_argument("--fn_multiplier", type=float, default=2.0,
+                        help="Multiply loss on positive samples to penalize FN more")
+    parser.add_argument("--label_smoothing", type=float, default=0.05,
+                        help="Label smoothing: 0->label_smoothing, 1->(1-label_smoothing)")
+    parser.add_argument("--warmup_epochs", type=int, default=5,
+                        help="Linear warmup epochs before cosine annealing")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save_dir", type=str, default="./comparison_results")
     parser.add_argument("--n_features", type=int, default=226)
@@ -67,20 +98,44 @@ def load_tensors(data_dir):
     return X, y
 
 
+def find_optimal_threshold(y_true, y_prob):
+    """Youden's J: threshold maximizing sensitivity + specificity - 1."""
+    fpr, tpr, thresholds = roc_curve(y_true, y_prob)
+    j_scores = tpr - fpr
+    return float(thresholds[int(np.argmax(j_scores))])
+
+
+def get_lr_with_warmup(epoch, base_lr, warmup_epochs):
+    """Linear warmup for first warmup_epochs, then 1.0 (for cosine scheduler to handle)."""
+    if epoch < warmup_epochs:
+        return base_lr * (epoch + 1) / warmup_epochs
+    return base_lr
+
+
+def compute_metrics(y_true, y_pred, y_prob):
+    """Accuracy, sensitivity, specificity, precision, F1, AUC-ROC."""
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+    return {
+        "accuracy":    float(accuracy_score(y_true, y_pred)),
+        "sensitivity": float(recall_score(y_true, y_pred, zero_division=0)),
+        "specificity": float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0,
+        "precision":   float(precision_score(y_true, y_pred, zero_division=0)),
+        "f1":          float(f1_score(y_true, y_pred, zero_division=0)),
+        "auc_roc":     float(roc_auc_score(y_true, y_prob))
+                       if len(np.unique(y_true)) > 1 else 0.0,
+        "tp": int(tp), "fp": int(fp), "tn": int(tn), "fn": int(fn),
+    }
+
+
 def make_loaders(X, y, val_split, batch_size, seed):
-    """Create train/val DataLoaders with balanced sampling."""
+    """Create train/val DataLoaders. Class imbalance handled via pos_weight in loss."""
     X_tr, X_val, y_tr, y_val = train_test_split(
         X, y, test_size=val_split, random_state=seed, stratify=y
     )
 
-    class_counts = torch.bincount(y_tr.long())
-    weights = 1.0 / class_counts.float()
-    sample_w = weights[y_tr.long()]
-    sampler = WeightedRandomSampler(sample_w, len(sample_w))
-
     train_loader = DataLoader(
         TensorDataset(X_tr, y_tr), batch_size=batch_size,
-        sampler=sampler, pin_memory=True,
+        shuffle=True, pin_memory=True,
     )
     val_loader = DataLoader(
         TensorDataset(X_val, y_val), batch_size=batch_size,
@@ -94,69 +149,85 @@ def make_loaders(X, y, val_split, batch_size, seed):
     return train_loader, val_loader, pos_weight
 
 
-def train_and_evaluate(model, train_loader, val_loader, pos_weight,
-                       epochs, patience, lr, device):
-    """Full training loop, returns best validation metrics and training time."""
-    criterion = nn.BCEWithLogitsLoss(
-        pos_weight=torch.tensor([pos_weight]).to(device)
-    )
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=3
+def train_and_evaluate(model, train_loader, val_loader, pos_weight, epochs,
+                       patience, lr, device, focal_gamma=2.0, fn_multiplier=2.0,
+                       label_smoothing=0.05, warmup_epochs=5):
+    """Full training loop with modern improvements, returns best validation metrics."""
+    # Loss function: Focal Loss for handling class imbalance
+    if focal_gamma > 0:
+        criterion = FocalLoss(gamma=focal_gamma,
+                             pos_weight=torch.tensor([pos_weight]).to(device))
+    else:
+        criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]).to(device))
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=max(1, epochs - warmup_epochs), T_mult=1, eta_min=1e-6
     )
 
-    best_loss = float("inf")
+    best_f1 = 0.0
     best_metrics = None
     wait = 0
     start_time = time.time()
 
     for epoch in range(1, epochs + 1):
+        # Learning rate warmup
+        if epoch <= warmup_epochs:
+            lr_scale = epoch / warmup_epochs
+            for pg in optimizer.param_groups:
+                pg['lr'] = lr * lr_scale
+
         # Train
         model.train()
         for X_b, y_b in train_loader:
             X_b = X_b.to(device, dtype=torch.float32)
             y_b = y_b.to(device, dtype=torch.float32).unsqueeze(1)
+
+            # Apply label smoothing
+            y_smooth = y_b * (1.0 - label_smoothing) + 0.5 * label_smoothing
+
             optimizer.zero_grad()
-            loss = criterion(model(X_b), y_b)
+            logits = model(X_b)
+            loss = criterion(logits, y_smooth)
+
+            # Asymmetric FN weighting: penalize missed seizures more
+            seizure_mask = (y_b == 1).float()
+            loss = loss * (1.0 + (fn_multiplier - 1.0) * seizure_mask.squeeze(1))
+            loss = loss.mean()
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
+        # Cosine scheduler step (after warmup)
+        if epoch > warmup_epochs:
+            scheduler.step()
+
         # Validate
         model.eval()
         all_probs, all_labels = [], []
-        val_loss_sum, n = 0.0, 0
         with torch.no_grad():
             for X_b, y_b in val_loader:
                 X_b = X_b.to(device, dtype=torch.float32)
                 y_b = y_b.to(device, dtype=torch.float32).unsqueeze(1)
                 logits = model(X_b)
-                val_loss_sum += criterion(logits, y_b).item()
-                n += 1
                 all_probs.append(torch.sigmoid(logits).cpu())
                 all_labels.append(y_b.cpu())
 
-        val_loss = val_loss_sum / n
-        scheduler.step(val_loss)
-
         probs = torch.cat(all_probs).numpy().flatten()
         labels = torch.cat(all_labels).numpy().flatten()
-        preds = (probs >= 0.5).astype(float)
 
-        tn, fp, fn, tp = confusion_matrix(labels, preds, labels=[0, 1]).ravel()
-        metrics = {
-            "accuracy": accuracy_score(labels, preds),
-            "sensitivity": recall_score(labels, preds, zero_division=0),
-            "specificity": tn / (tn + fp) if (tn + fp) > 0 else 0.0,
-            "precision": precision_score(labels, preds, zero_division=0),
-            "f1": f1_score(labels, preds, zero_division=0),
-            "auc_roc": roc_auc_score(labels, probs) if len(np.unique(labels)) > 1 else 0.0,
-            "val_loss": val_loss,
-            "epoch": epoch,
-        }
+        # Find optimal threshold using Youden's J
+        threshold = find_optimal_threshold(labels, probs)
+        preds = (probs >= threshold).astype(float)
 
-        if val_loss < best_loss:
-            best_loss = val_loss
+        metrics = compute_metrics(labels, preds, probs)
+        metrics["epoch"] = epoch
+        metrics["threshold"] = threshold
+
+        # Early stopping on F1
+        if metrics["f1"] > best_f1:
+            best_f1 = metrics["f1"]
             best_metrics = metrics.copy()
             wait = 0
         else:
@@ -228,6 +299,10 @@ def main():
         metrics = train_and_evaluate(
             model, raw_train, raw_val, pos_w,
             args.epochs, args.patience, args.lr, device,
+            focal_gamma=args.focal_gamma,
+            fn_multiplier=args.fn_multiplier,
+            label_smoothing=args.label_smoothing,
+            warmup_epochs=args.warmup_epochs,
         )
         all_results[model_name] = metrics
 
@@ -235,6 +310,7 @@ def main():
               f"Sens: {metrics['sensitivity']:.3f} | "
               f"F1: {metrics['f1']:.3f} | "
               f"AUC: {metrics['auc_roc']:.3f} | "
+              f"Threshold: {metrics['threshold']:.4f} | "
               f"Time: {metrics['train_time_sec']}s")
 
     # Train feature-based model
@@ -257,6 +333,10 @@ def main():
         metrics = train_and_evaluate(
             model, feat_train, feat_val, feat_pos_w,
             args.epochs, args.patience, args.lr, device,
+            focal_gamma=args.focal_gamma,
+            fn_multiplier=args.fn_multiplier,
+            label_smoothing=args.label_smoothing,
+            warmup_epochs=args.warmup_epochs,
         )
         all_results[model_name] = metrics
 
@@ -264,6 +344,7 @@ def main():
               f"Sens: {metrics['sensitivity']:.3f} | "
               f"F1: {metrics['f1']:.3f} | "
               f"AUC: {metrics['auc_roc']:.3f} | "
+              f"Threshold: {metrics['threshold']:.4f} | "
               f"Time: {metrics['train_time_sec']}s")
     else:
         print(f"\n  Skipping feature_bilstm (no --feature_dir provided)")
@@ -273,8 +354,8 @@ def main():
     print(f"  COMPARISON REPORT")
     print(f"{'='*80}\n")
 
-    header = (f"{'Model':<22} | {'Acc':>6} | {'Sens':>6} | {'Spec':>6} | "
-              f"{'F1':>6} | {'AUC':>6} | {'Params':>10} | {'Time':>7}")
+    header = (f"{'Model':<22} | {'F1':>6} | {'Sens':>6} | {'Spec':>6} | "
+              f"{'AUC':>6} | {'Threshold':>9} | {'Params':>10}")
     print(header)
     print("-" * len(header))
 
@@ -282,14 +363,17 @@ def main():
     sorted_models = sorted(all_results.items(), key=lambda x: x[1]["f1"], reverse=True)
 
     for name, m in sorted_models:
-        print(f"{name:<22} | {m['accuracy']:>6.3f} | {m['sensitivity']:>6.3f} | "
-              f"{m['specificity']:>6.3f} | {m['f1']:>6.3f} | {m['auc_roc']:>6.3f} | "
-              f"{m['total_params']:>10,} | {m['train_time_sec']:>6.1f}s")
+        print(f"{name:<22} | {m['f1']:>6.3f} | {m['sensitivity']:>6.3f} | "
+              f"{m['specificity']:>6.3f} | {m['auc_roc']:>6.3f} | "
+              f"{m['threshold']:>9.4f} | {m['total_params']:>10,}")
 
     best_name = sorted_models[0][0]
+    best_model_metrics = sorted_models[0][1]
     print(f"\n  >>> Best model by F1: {best_name} "
-          f"(F1={sorted_models[0][1]['f1']:.4f}, "
-          f"AUC={sorted_models[0][1]['auc_roc']:.4f})")
+          f"(F1={best_model_metrics['f1']:.4f}, AUC={best_model_metrics['auc_roc']:.4f})")
+    print(f"      Threshold: {best_model_metrics['threshold']:.4f}")
+    print(f"      Sensitivity: {best_model_metrics['sensitivity']:.4f}, "
+          f"Specificity: {best_model_metrics['specificity']:.4f}")
 
     # Save results
     results_path = os.path.join(args.save_dir, "comparison_results.json")
