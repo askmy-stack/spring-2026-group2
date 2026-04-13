@@ -2,16 +2,15 @@
 Feature-Based BiLSTM Classifier
 ==================================
 Operates on pre-extracted feature vectors (226 features) instead of raw EEG.
-Integrates domain knowledge from clinical EEG analysis into the classification.
 
-Improvements over original:
-- BatchNorm1d on raw 226 features before processing (features may be unscaled)
-- Deeper 2-layer projection MLP: 226 -> hidden_size*2 -> hidden_size
-- Residual connection in projection block (stabilises gradient flow)
-- LayerNorm between projection and LSTM
-- Default seq_len changed 1 -> 10 (10-second context captures pre-ictal build-up)
-- Global avg-pool + max-pool over LSTM outputs (vs single final hidden state)
-- LayerNorm after pooling
+Improvements (v2):
+- BatchNorm1d on raw 226 features
+- Deep 2-layer projection MLP with residual shortcut
+- Default seq_len 1 -> 10 (10-second pre-ictal context)
+- BiLSTM over feature sequence
+- Temporal MultiheadAttention over 10-window sequence (weights pre-ictal windows)
+- Global avg+max pooling
+- LayerNorm + 2-layer FC head
 """
 
 import torch
@@ -27,6 +26,7 @@ class FeatureBiLSTM(nn.Module):
         num_layers: int = 2,
         dropout: float = 0.3,
         num_classes: int = 1,
+        num_heads: int = 4,
         # Kept for API compatibility with raw-signal models
         n_channels: int = 16,
     ):
@@ -35,14 +35,14 @@ class FeatureBiLSTM(nn.Module):
             n_features: Number of extracted features per window (default 226).
             seq_len: Consecutive windows processed as one sequence.
                      Default 10 = 10 seconds of context at 1s windows.
-                     Use 1 for single-window classification.
             hidden_size: LSTM hidden dimension.
-            num_layers:  Number of stacked BiLSTM layers.
-            dropout:     Dropout probability.
+            num_layers: Number of stacked BiLSTM layers.
+            dropout: Dropout probability.
+            num_heads: Number of attention heads for temporal attention.
         """
         super().__init__()
-        self.n_features = n_features
-        self.seq_len = seq_len
+        self.n_features  = n_features
+        self.seq_len     = seq_len
         self.hidden_size = hidden_size
 
         # Normalise raw features (handles arbitrary feature scales)
@@ -72,12 +72,24 @@ class FeatureBiLSTM(nn.Module):
             dropout=dropout if num_layers > 1 else 0.0,
         )
 
+        lstm_out_size = hidden_size * 2
+
+        # Temporal attention: weights each of the 10 windows differently
+        # Pre-ictal windows (just before seizure) should get higher weights
+        self.temporal_attn = nn.MultiheadAttention(
+            embed_dim=lstm_out_size,
+            num_heads=num_heads,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.attn_norm = nn.LayerNorm(lstm_out_size)
+
         # BiLSTM output: hidden_size*2; avg+max pool -> hidden_size*4
-        self.pool_norm = nn.LayerNorm(hidden_size * 4)
-        self.dropout = nn.Dropout(dropout)
+        self.pool_norm = nn.LayerNorm(lstm_out_size * 2)
+        self.dropout   = nn.Dropout(dropout)
 
         self.fc = nn.Sequential(
-            nn.Linear(hidden_size * 4, hidden_size),
+            nn.Linear(lstm_out_size * 2, hidden_size),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_size, num_classes),
@@ -113,12 +125,16 @@ class FeatureBiLSTM(nn.Module):
         # BiLSTM: (batch, seq_len, hidden_size * 2)
         lstm_out, _ = self.lstm(x)
 
+        # Temporal MultiheadAttention: weights the 10 windows
+        # Pre-ictal context (windows close to seizure onset) get higher weights
+        attended, _ = self.temporal_attn(lstm_out, lstm_out, lstm_out)
+        attended = self.attn_norm(attended + lstm_out)
+
         # Global avg + max pooling over sequence
-        avg_pool = lstm_out.mean(dim=1)
-        max_pool = lstm_out.max(dim=1).values
+        avg_pool = attended.mean(dim=1)
+        max_pool = attended.max(dim=1).values
         out = torch.cat([avg_pool, max_pool], dim=1)  # (batch, hidden_size * 4)
 
         out = self.pool_norm(out)
         out = self.dropout(out)
-        logits = self.fc(out)
-        return logits
+        return self.fc(out)
