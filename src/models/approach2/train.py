@@ -52,7 +52,9 @@ class FocalLoss(nn.Module):
         super().__init__()
         self.gamma = gamma
         self.reduction = reduction
-        self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
+        self.pos_weight = pos_weight
+        # pos_weight applied manually after focal — not inside BCE
+        self.bce = nn.BCEWithLogitsLoss(reduction="none")
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         # Cast to float32 to prevent FP16 underflow inside torch.amp.autocast
@@ -62,12 +64,20 @@ class FocalLoss(nn.Module):
         probs = torch.sigmoid(logits)
         pt = torch.where(targets == 1, probs, 1 - probs)
         focal_weight = (1 - pt) ** self.gamma
-        loss = focal_weight * bce_loss
+        focal_loss = focal_weight * bce_loss
+        # Apply pos_weight as flat per-sample multiplier after focal modulation
+        if self.pos_weight is not None:
+            class_weight = torch.where(
+                targets == 1,
+                self.pos_weight.expand_as(targets),
+                torch.ones_like(targets),
+            )
+            focal_loss = focal_loss * class_weight
         if self.reduction == "mean":
-            return loss.mean()
+            return focal_loss.mean()
         elif self.reduction == "none":
-            return loss
-        return loss.sum()
+            return focal_loss
+        return focal_loss.sum()
 
 
 def apply_label_smoothing(y: torch.Tensor, epsilon: float = 0.05) -> torch.Tensor:
