@@ -272,11 +272,11 @@ def train_model(
     output_dir: str,
     epochs: int = 50,
     batch_size: int = 64,
-    lr: float = 1e-3,
+    lr: float = 3e-3,
     use_pretrained: bool = False,
     pretrained_encoder: str = "cbramod",
-    focal_gamma: float = 2.0,
-    label_smoothing: float = 0.05,
+    focal_gamma: float = 1.0,
+    label_smoothing: float = 0.02,
     device: Optional[str] = None,
 ) -> Dict:
     """Train a single model."""
@@ -432,12 +432,12 @@ def main():
     parser.add_argument("--output_dir", type=str, default="./checkpoints")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=3e-3)
     parser.add_argument("--pretrained", action="store_true", help="Use pretrained encoder")
     parser.add_argument("--encoder", type=str, default="cbramod", 
                        help="Pretrained encoder: cbramod, eegpt, biot, labram")
-    parser.add_argument("--focal_gamma", type=float, default=2.0)
-    parser.add_argument("--label_smoothing", type=float, default=0.05)
+    parser.add_argument("--focal_gamma", type=float, default=1.0)
+    parser.add_argument("--label_smoothing", type=float, default=0.02)
     parser.add_argument("--device", type=str, default=None)
 
     args = parser.parse_args()
