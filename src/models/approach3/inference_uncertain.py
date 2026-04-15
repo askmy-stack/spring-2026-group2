@@ -10,12 +10,16 @@ Usage:
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Dict, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
+
+# Add current directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 from architectures import get_model
 from modules.uncertainty import mc_dropout_inference, compute_uncertainty, flag_uncertain_predictions

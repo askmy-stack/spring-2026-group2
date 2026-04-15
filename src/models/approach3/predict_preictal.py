@@ -9,6 +9,7 @@ Usage:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,9 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, roc_auc_score
+
+# Add current directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 from architectures import HierarchicalLSTM, PreIctalPredictor
 

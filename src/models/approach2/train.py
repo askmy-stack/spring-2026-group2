@@ -48,9 +48,10 @@ from architectures import get_model, list_models, MODEL_REGISTRY
 class FocalLoss(nn.Module):
     """Focal Loss for handling class imbalance."""
 
-    def __init__(self, gamma: float = 2.0, pos_weight: Optional[torch.Tensor] = None):
+    def __init__(self, gamma: float = 2.0, pos_weight: Optional[torch.Tensor] = None, reduction: str = "mean"):
         super().__init__()
         self.gamma = gamma
+        self.reduction = reduction
         self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -58,7 +59,12 @@ class FocalLoss(nn.Module):
         probs = torch.sigmoid(logits)
         pt = torch.where(targets == 1, probs, 1 - probs)
         focal_weight = (1 - pt) ** self.gamma
-        return (focal_weight * bce_loss).mean()
+        loss = focal_weight * bce_loss
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "none":
+            return loss
+        return loss.sum()
 
 
 def apply_label_smoothing(y: torch.Tensor, epsilon: float = 0.05) -> torch.Tensor:
@@ -100,7 +106,6 @@ def train_one_epoch(
     scaler: torch.cuda.amp.GradScaler,
     use_amp: bool = True,
     label_smoothing: float = 0.05,
-    fn_multiplier: float = 2.0,
 ) -> float:
     """Train for one epoch."""
     model.train()
@@ -130,14 +135,6 @@ def train_one_epoch(
                 vq_loss = 0.0
 
             loss = criterion(logits, y_smooth)
-
-            # Asymmetric FN weighting
-            if fn_multiplier != 1.0:
-                with torch.no_grad():
-                    fn_mask = (y_batch == 1) & (torch.sigmoid(logits) < 0.5)
-                    fn_weight = torch.ones_like(y_batch)
-                    fn_weight[fn_mask] = fn_multiplier
-                loss = (loss * fn_weight.squeeze()).mean() if loss.dim() > 0 else loss
 
             # Add VQ loss
             if isinstance(vq_loss, torch.Tensor):
@@ -260,7 +257,6 @@ def train_model(
     pretrained_encoder: str = "cbramod",
     focal_gamma: float = 2.0,
     label_smoothing: float = 0.05,
-    fn_multiplier: float = 2.0,
     device: Optional[str] = None,
 ) -> Dict:
     """Train a single model."""
@@ -340,7 +336,6 @@ def train_model(
             model, train_loader, criterion, optimizer, device, scaler,
             use_amp=use_amp,
             label_smoothing=label_smoothing,
-            fn_multiplier=fn_multiplier,
         )
 
         # Evaluate
@@ -396,7 +391,6 @@ def train_model(
             "pretrained_encoder": pretrained_encoder,
             "focal_gamma": focal_gamma,
             "label_smoothing": label_smoothing,
-            "fn_multiplier": fn_multiplier,
         },
     }
 
@@ -424,7 +418,6 @@ def main():
                        help="Pretrained encoder: cbramod, eegpt, biot, labram")
     parser.add_argument("--focal_gamma", type=float, default=2.0)
     parser.add_argument("--label_smoothing", type=float, default=0.05)
-    parser.add_argument("--fn_multiplier", type=float, default=2.0)
     parser.add_argument("--device", type=str, default=None)
 
     args = parser.parse_args()
@@ -448,7 +441,6 @@ def main():
             pretrained_encoder=args.encoder,
             focal_gamma=args.focal_gamma,
             label_smoothing=args.label_smoothing,
-            fn_multiplier=args.fn_multiplier,
             device=args.device,
         )
         all_results[model_name] = results

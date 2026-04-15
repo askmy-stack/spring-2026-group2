@@ -9,12 +9,16 @@ Usage:
 """
 
 import argparse
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
+
+# Add current directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 from modules.diffusion_eeg import EEGDiffusion
 
