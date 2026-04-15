@@ -454,9 +454,17 @@ def main():
 
         # For attention_bilstm: downsample raw EEG from 256 -> 64 steps via avg-pool
         if model_name == "attention_bilstm":
-            X_attn = torch.nn.functional.avg_pool1d(X_raw, kernel_size=4, stride=4)
-            at, av, apw = make_loaders(X_attn, y_raw, args.val_split, args.batch_size, args.seed)
-            loader_train, loader_val, pw = at, av, apw
+            X_attn_train = torch.nn.functional.avg_pool1d(X_train, kernel_size=4, stride=4)
+            X_attn_test = torch.nn.functional.avg_pool1d(X_test, kernel_size=4, stride=4)
+            loader_train = DataLoader(
+                TensorDataset(X_attn_train, y_train), batch_size=args.batch_size,
+                shuffle=True, pin_memory=torch.cuda.is_available(),
+            )
+            loader_val = DataLoader(
+                TensorDataset(X_attn_test, y_test), batch_size=args.batch_size,
+                shuffle=False, pin_memory=torch.cuda.is_available(),
+            )
+            pw = raw_pw
         elif model_name == "feature_bilstm":
             loader_train, loader_val, pw = feat_train, feat_val, feat_pw
         else:
