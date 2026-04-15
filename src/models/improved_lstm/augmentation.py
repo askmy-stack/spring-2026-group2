@@ -82,7 +82,10 @@ class EEGAugmentation(nn.Module):
             return x
         seq_len = x.size(-1)
         mask_len = torch.randint(1, self.time_mask_max + 1, (1,)).item()
-        start = torch.randint(0, seq_len - mask_len, (1,)).item()
+        max_start = seq_len - mask_len
+        if max_start <= 0:
+            return x
+        start = torch.randint(0, max_start, (1,)).item()
         x = x.clone()
         x[..., start:start + mask_len] = 0
         return x
