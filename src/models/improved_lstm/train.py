@@ -396,31 +396,52 @@ class ImprovedTrainer:
 # Training Functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-def load_real_data(data_path: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Load real EEG data from tensors folder."""
+def load_real_data(data_path: str):
+    """
+    Load real EEG data from tensors folder.
+
+    Returns (X_train, y_train, X_val, y_val, X_test, y_test).
+
+    Split strategy:
+      - train/ val/ test/ all present  → use each folder for its role
+      - train/ + test/ only            → val = test (no leakage risk stated)
+      - train/ + val/  only            → val = test = val folder
+    """
     data_path = Path(data_path)
-    
-    # Load training data
-    train_data = torch.load(data_path / "train" / "data.pt", weights_only=True)
-    train_labels = torch.load(data_path / "train" / "labels.pt", weights_only=True)
-    
-    # Load test/val data
-    if (data_path / "test" / "data.pt").exists():
-        test_data = torch.load(data_path / "test" / "data.pt", weights_only=True)
-        test_labels = torch.load(data_path / "test" / "labels.pt", weights_only=True)
-    elif (data_path / "val" / "data.pt").exists():
-        test_data = torch.load(data_path / "val" / "data.pt", weights_only=True)
-        test_labels = torch.load(data_path / "val" / "labels.pt", weights_only=True)
+
+    def _load(folder):
+        d = torch.load(data_path / folder / "data.pt", weights_only=True).float()
+        l = torch.load(data_path / folder / "labels.pt", weights_only=True).float().squeeze()
+        return d, l
+
+    has_train = (data_path / "train" / "data.pt").exists()
+    has_val   = (data_path / "val"   / "data.pt").exists()
+    has_test  = (data_path / "test"  / "data.pt").exists()
+
+    if not has_train:
+        raise FileNotFoundError(f"No train data found in {data_path}")
+
+    X_train, y_train = _load("train")
+
+    if has_val and has_test:
+        # Ideal: separate val for early-stopping, test for final evaluation
+        X_val,  y_val  = _load("val")
+        X_test, y_test = _load("test")
+        print(f"  Split: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}")
+    elif has_test:
+        # No val folder — use test for both early-stopping and reporting
+        X_val,  y_val  = _load("test")
+        X_test, y_test = X_val, y_val
+        print(f"  Split: train={len(X_train)}, test={len(X_test)} (used as val+test)")
+    elif has_val:
+        # No test folder — use val for both
+        X_val,  y_val  = _load("val")
+        X_test, y_test = X_val, y_val
+        print(f"  Split: train={len(X_train)}, val={len(X_val)} (used as val+test)")
     else:
-        raise FileNotFoundError(f"No test or val data found in {data_path}")
-    
-    # Convert to float tensors
-    X_train = train_data.float()
-    y_train = train_labels.float().squeeze()
-    X_test = test_data.float()
-    y_test = test_labels.float().squeeze()
-    
-    return X_train, X_test, y_train, y_test
+        raise FileNotFoundError(f"No val or test data found in {data_path}")
+
+    return X_train, y_train, X_val, y_val, X_test, y_test
 
 
 def train_improved(
@@ -454,33 +475,25 @@ def train_improved(
     
     # Load data
     print(f"\nLoading data from {data_path}...")
-    X_train, X_test, y_train, y_test = load_real_data(data_path)
-    
+    X_train, y_train, X_val, y_val, X_test, y_test = load_real_data(data_path)
+
     n_pos = y_train.sum().item()
     n_neg = len(y_train) - n_pos
     pos_weight = n_neg / max(n_pos, 1)
-    
-    print(f"Train: {len(X_train)} samples (seizure={int(n_pos)})")
-    print(f"Test:  {len(X_test)} samples (seizure={int(y_test.sum().item())})")
-    
+
     # Create data loaders
-    train_loader = DataLoader(
-        TensorDataset(X_train, y_train),
-        batch_size=config['batch_size'],
-        shuffle=True,
-        pin_memory=torch.cuda.is_available(),
-    )
-    val_loader = DataLoader(
-        TensorDataset(X_test, y_test),
-        batch_size=config['batch_size'],
-        shuffle=False,
-        pin_memory=torch.cuda.is_available(),
-    )
-    
+    pin = torch.cuda.is_available()
+    train_loader = DataLoader(TensorDataset(X_train, y_train),
+                              batch_size=config['batch_size'], shuffle=True,  pin_memory=pin)
+    val_loader   = DataLoader(TensorDataset(X_val,   y_val),
+                              batch_size=config['batch_size'], shuffle=False, pin_memory=pin)
+    test_loader  = DataLoader(TensorDataset(X_test,  y_test),
+                              batch_size=config['batch_size'], shuffle=False, pin_memory=pin)
+
     # Create model
     n_channels = X_train.size(1)
-    seq_len = X_train.size(2)
-    
+    seq_len    = X_train.size(2)
+
     ModelClass = MODEL_REGISTRY[model_name]
     model = ModelClass(
         n_channels=n_channels,
@@ -489,24 +502,32 @@ def train_improved(
         num_layers=config['num_layers'],
         dropout=config['dropout'],
     )
-    
+
     print(f"\nTraining: {model_name}")
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(f"Config: hidden={config['hidden_size']}, layers={config['num_layers']}, "
           f"lr={config['lr']}, batch={config['batch_size']}")
-    
-    # Train
+
+    # Train (early-stopping on val)
     trainer = ImprovedTrainer(model, device, config)
     metrics = trainer.train(train_loader, val_loader, pos_weight)
-    
+
+    # Final evaluation on held-out test set
+    final_metrics = trainer._validate(test_loader,
+        FocalLoss(gamma=1.0,
+                  pos_weight=torch.tensor([pos_weight]).to(device),
+                  label_smoothing=config['label_smoothing']))
+    metrics.update({f'test_{k}': v for k, v in final_metrics.items()})
+
     # Save
     os.makedirs(save_dir, exist_ok=True)
     trainer.save(os.path.join(save_dir, f"{model_name}_best.pt"))
-    
+
     print(f"\nResults for {model_name}:")
-    print(f"  F1: {metrics['f1']:.4f} | AUC: {metrics['auc_roc']:.4f} | "
-          f"Sens: {metrics['sensitivity']:.4f} | Spec: {metrics['specificity']:.4f}")
-    
+    print(f"  Val  F1: {metrics['f1']:.4f} | AUC: {metrics['auc_roc']:.4f}")
+    print(f"  Test F1: {metrics['test_f1']:.4f} | AUC: {metrics['test_auc_roc']:.4f} | "
+          f"Sens: {metrics['test_sensitivity']:.4f} | Spec: {metrics['test_specificity']:.4f}")
+
     return metrics
 
 
@@ -546,27 +567,22 @@ def train_ensemble(
     
     # Load data
     print(f"\nLoading data from {data_path}...")
-    X_train, X_test, y_train, y_test = load_real_data(data_path)
-    
+    X_train, y_train, X_val, y_val, X_test, y_test = load_real_data(data_path)
+
     n_pos = y_train.sum().item()
     n_neg = len(y_train) - n_pos
     pos_weight = n_neg / max(n_pos, 1)
-    
+
     n_channels = X_train.size(1)
-    seq_len = X_train.size(2)
-    
-    train_loader = DataLoader(
-        TensorDataset(X_train, y_train),
-        batch_size=config['batch_size'],
-        shuffle=True,
-        pin_memory=torch.cuda.is_available(),
-    )
-    val_loader = DataLoader(
-        TensorDataset(X_test, y_test),
-        batch_size=config['batch_size'],
-        shuffle=False,
-        pin_memory=torch.cuda.is_available(),
-    )
+    seq_len    = X_train.size(2)
+
+    pin = torch.cuda.is_available()
+    train_loader = DataLoader(TensorDataset(X_train, y_train),
+                              batch_size=config['batch_size'], shuffle=True,  pin_memory=pin)
+    val_loader   = DataLoader(TensorDataset(X_val,   y_val),
+                              batch_size=config['batch_size'], shuffle=False, pin_memory=pin)
+    test_loader  = DataLoader(TensorDataset(X_test,  y_test),
+                              batch_size=config['batch_size'], shuffle=False, pin_memory=pin)
     
     # Train individual models
     trained_models = []
@@ -589,14 +605,14 @@ def train_ensemble(
         trainer = ImprovedTrainer(model, device, config)
         metrics = trainer.train(train_loader, val_loader, pos_weight)
         all_metrics[model_name] = metrics
-        
+
         # Save individual model
         os.makedirs(save_dir, exist_ok=True)
         trainer.save(os.path.join(save_dir, f"{model_name}_best.pt"))
-        
+
         trained_models.append(trainer.model)
-        
-        print(f"  F1: {metrics['f1']:.4f} | AUC: {metrics['auc_roc']:.4f}")
+
+        print(f"  Val F1: {metrics['f1']:.4f} | AUC: {metrics['auc_roc']:.4f}")
     
     # Compute ensemble weights
     print(f"\n{'='*60}")
@@ -605,16 +621,16 @@ def train_ensemble(
     
     weights = compute_ensemble_weights(trained_models, val_loader, device, metric='f1')
     print(f"Weights: {dict(zip(model_names, [f'{w:.3f}' for w in weights]))}")
-    
+
     # Create ensemble
     ensemble = EnsemblePredictor(trained_models, weights=weights, strategy=strategy)
-    
-    # Evaluate ensemble
+
+    # Final ensemble evaluation on held-out test set
     ensemble.eval()
     all_probs, all_labels = [], []
-    
+
     with torch.no_grad():
-        for X_batch, y_batch in val_loader:
+        for X_batch, y_batch in test_loader:
             X_batch = X_batch.to(device)
             probs = ensemble.predict_proba(X_batch).cpu()
             all_probs.append(probs)
