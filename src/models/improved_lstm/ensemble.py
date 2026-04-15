@@ -92,7 +92,7 @@ class EnsemblePredictor(nn.Module):
             ensemble_prob = all_probs.mean(dim=-1)
         
         elif self.strategy == 'weighted':
-            weights = self.weights.view(1, 1, -1)
+            weights = self.weights.to(all_probs.device).view(1, 1, -1)
             ensemble_prob = (all_probs * weights).sum(dim=-1)
         
         elif self.strategy == 'voting':
