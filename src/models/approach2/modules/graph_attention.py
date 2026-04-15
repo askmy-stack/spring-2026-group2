@@ -281,7 +281,7 @@ class GraphAttention(nn.Module):
         out = torch.einsum("bijh,bjhf->bihf", alpha, h)  # (B, N, H, F)
 
         if self.concat:
-            out = out.view(batch, n_channels, -1)  # (B, N, H*F)
+            out = out.reshape(batch, n_channels, -1)  # (B, N, H*F)
         else:
             out = out.mean(dim=2)  # (B, N, F)
 
