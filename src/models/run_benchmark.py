@@ -135,11 +135,13 @@ def generate_eeg_data(
 def generate_feature_data(
     n_samples: int = 4000,
     n_features: int = 226,
+    seq_len: int = 10,
     seizure_ratio: float = 0.3,
     seed: int = 42,
 ):
     """
-    Generate synthetic 226-dim feature vectors matching FeatureBiLSTM input.
+    Generate synthetic feature sequences matching FeatureBiLSTM input.
+    Output shape: (n_samples, seq_len, n_features)
     Seizure windows have elevated power features and reduced entropy.
     """
     rng = np.random.default_rng(seed)
@@ -147,13 +149,13 @@ def generate_feature_data(
     n_bg      = n_samples - n_seizure
 
     # Background: Gaussian noise centred at 0, std 1
-    X_bg = rng.standard_normal((n_bg, n_features)).astype(np.float32)
+    X_bg = rng.standard_normal((n_bg, seq_len, n_features)).astype(np.float32)
 
     # Seizure: elevated mean in first 50 features (band power), reduced variance in rest
-    X_sz = rng.standard_normal((n_seizure, n_features)).astype(np.float32)
-    X_sz[:, :50] += rng.uniform(1.5, 3.0, (n_seizure, 50))  # elevated band power
-    X_sz[:, 50:120] *= 0.5                                    # reduced entropy
-    X_sz[:, 120:180] += rng.uniform(-1.0, 1.0, (n_seizure, 60))
+    X_sz = rng.standard_normal((n_seizure, seq_len, n_features)).astype(np.float32)
+    X_sz[:, :, :50] += rng.uniform(1.5, 3.0, (n_seizure, seq_len, 50))  # elevated band power
+    X_sz[:, :, 50:120] *= 0.5                                    # reduced entropy
+    X_sz[:, :, 120:180] += rng.uniform(-1.0, 1.0, (n_seizure, seq_len, 60))
 
     X = np.concatenate([X_bg, X_sz], axis=0)
     y = np.array([0] * n_bg + [1] * n_seizure, dtype=np.int64)
@@ -389,16 +391,44 @@ def main():
         shuffle=False, pin_memory=torch.cuda.is_available(),
     )
     
-    # For feature_bilstm, generate synthetic features (or skip if using real data)
+    # For feature_bilstm, extract windowed features from raw EEG
+    # Model expects (batch, seq_len=10, n_features=226)
+    FEAT_SEQ_LEN = 10
     if use_real_data:
-        # Use a subset of real data reshaped for feature model
-        X_feat = X_train[:, :, :226].reshape(len(X_train), -1)[:, :N_FEATURES]
+        # Divide 256 timesteps into 10 windows, compute simple features per window
+        def extract_windowed_features(X_raw, n_windows=10):
+            """Extract features from raw EEG: (batch, channels, time) -> (batch, n_windows, features)"""
+            batch, n_ch, time = X_raw.shape
+            win_size = time // n_windows  # 25 timesteps per window
+            features_list = []
+            for i in range(n_windows):
+                start = i * win_size
+                end = start + win_size
+                window = X_raw[:, :, start:end]  # (batch, 16, 25)
+                # Simple features per channel: mean, std, min, max (4 features × 16 channels = 64)
+                # Plus raw samples to reach 226 features
+                feat_mean = window.mean(dim=2)  # (batch, 16)
+                feat_std = window.std(dim=2)    # (batch, 16)
+                feat_min = window.min(dim=2).values  # (batch, 16)
+                feat_max = window.max(dim=2).values  # (batch, 16)
+                # Flatten first 9 timesteps per channel: 16 * 9 = 144
+                feat_raw = window[:, :, :9].reshape(batch, -1)  # (batch, 144)
+                # Total: 64 + 144 = 208, pad to 226
+                win_feat = torch.cat([feat_mean, feat_std, feat_min, feat_max, feat_raw], dim=1)
+                # Pad to N_FEATURES
+                if win_feat.shape[1] < N_FEATURES:
+                    pad = torch.zeros(batch, N_FEATURES - win_feat.shape[1], device=X_raw.device)
+                    win_feat = torch.cat([win_feat, pad], dim=1)
+                features_list.append(win_feat[:, :N_FEATURES])
+            return torch.stack(features_list, dim=1)  # (batch, n_windows, features)
+        
+        X_feat = extract_windowed_features(X_train, FEAT_SEQ_LEN)
         y_feat = y_train
-        X_feat_test = X_test[:, :, :226].reshape(len(X_test), -1)[:, :N_FEATURES]
+        X_feat_test = extract_windowed_features(X_test, FEAT_SEQ_LEN)
         y_feat_test = y_test
     else:
         X_feat, y_feat = generate_feature_data(
-            n_samples=args.n_samples, n_features=N_FEATURES, seed=args.seed
+            n_samples=args.n_samples, n_features=N_FEATURES, seq_len=FEAT_SEQ_LEN, seed=args.seed
         )
         X_feat, X_feat_test, y_feat, y_feat_test = train_test_split(
             X_feat, y_feat, test_size=args.val_split, random_state=args.seed, stratify=y_feat
@@ -437,11 +467,7 @@ def main():
         print(f"{'─'*65}")
 
         ModelClass = MODEL_REGISTRY[model_name]
-        # attention_bilstm: reduce seq_len to 64 via avg-pool so MHA stays fast on CPU
-        if model_name == "attention_bilstm":
-            extra_kwargs = dict(extra_kwargs)
-            extra_kwargs["seq_len"] = SEQ_LEN // 4  # 64 steps after downsampling
-
+        # No downsampling for attention_bilstm - GPU can handle full sequence
         model = ModelClass(
             hidden_size=args.hidden_size,
             num_layers=args.num_layers,
@@ -452,20 +478,8 @@ def main():
         n_params = sum(p.numel() for p in model.parameters())
         print(f"  Parameters: {n_params:,}")
 
-        # For attention_bilstm: downsample raw EEG from 256 -> 64 steps via avg-pool
-        if model_name == "attention_bilstm":
-            X_attn_train = torch.nn.functional.avg_pool1d(X_train, kernel_size=4, stride=4)
-            X_attn_test = torch.nn.functional.avg_pool1d(X_test, kernel_size=4, stride=4)
-            loader_train = DataLoader(
-                TensorDataset(X_attn_train, y_train), batch_size=args.batch_size,
-                shuffle=True, pin_memory=torch.cuda.is_available(),
-            )
-            loader_val = DataLoader(
-                TensorDataset(X_attn_test, y_test), batch_size=args.batch_size,
-                shuffle=False, pin_memory=torch.cuda.is_available(),
-            )
-            pw = raw_pw
-        elif model_name == "feature_bilstm":
+        # Use appropriate data loaders for each model
+        if model_name == "feature_bilstm":
             loader_train, loader_val, pw = feat_train, feat_val, feat_pw
         else:
             loader_train, loader_val, pw = raw_train, raw_val, raw_pw
