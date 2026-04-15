@@ -87,18 +87,46 @@ def apply_label_smoothing(y: torch.Tensor, epsilon: float = 0.05) -> torch.Tenso
     return y * (1.0 - epsilon) + 0.5 * epsilon
 
 
+class WarmupCosineScheduler:
+    """Linear warmup followed by cosine annealing."""
+
+    def __init__(self, optimizer, warmup_epochs: int, total_epochs: int, min_lr: float = 1e-6):
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.total_epochs = total_epochs
+        self.min_lr = min_lr
+        self.base_lrs = [g['lr'] for g in optimizer.param_groups]
+
+    def step(self, epoch: int):
+        if epoch < self.warmup_epochs:
+            factor = (epoch + 1) / max(self.warmup_epochs, 1)
+        else:
+            progress = (epoch - self.warmup_epochs) / max(self.total_epochs - self.warmup_epochs, 1)
+            factor = 0.5 * (1 + np.cos(np.pi * progress))
+        for base_lr, group in zip(self.base_lrs, self.optimizer.param_groups):
+            group['lr'] = max(self.min_lr, base_lr * factor)
+
+    def get_lr(self) -> float:
+        return self.optimizer.param_groups[0]['lr']
+
+
 def find_optimal_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> float:
-    """Find optimal threshold using Youden's J statistic."""
-    thresholds = np.arange(0.1, 0.9, 0.01)
-    best_j = -1
+    """Find optimal threshold using Youden's J statistic.
+    Scans [0.01, 0.99] so that very low probability outputs are handled correctly.
+    """
+    if len(np.unique(y_true)) < 2:
+        return 0.5
+
+    thresholds = np.arange(0.01, 1.00, 0.01)
+    best_j = -1.0
     best_thresh = 0.5
 
     for thresh in thresholds:
         y_pred = (y_prob >= thresh).astype(float)
         tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
-        sens = tp / (tp + fn) if (tp + fn) > 0 else 0
-        spec = tn / (tn + fp) if (tn + fp) > 0 else 0
-        j = sens + spec - 1
+        sens = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        spec = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+        j = sens + spec - 1.0
         if j > best_j:
             best_j = j
             best_thresh = thresh
@@ -228,16 +256,16 @@ def load_data(data_path: str, test_size: float = 0.2) -> Tuple:
     train_data_pt = data_path / "train" / "data.pt"
     if train_data_pt.exists():
         print(f"Loading tensor data from {data_path}")
-        X_train = torch.load(data_path / "train" / "data.pt").numpy()
-        y_train = torch.load(data_path / "train" / "labels.pt").numpy().squeeze()
+        X_train = torch.load(data_path / "train" / "data.pt", weights_only=True).numpy()
+        y_train = torch.load(data_path / "train" / "labels.pt", weights_only=True).numpy().squeeze()
         
         # Load test or val
         if (data_path / "test" / "data.pt").exists():
-            X_test = torch.load(data_path / "test" / "data.pt").numpy()
-            y_test = torch.load(data_path / "test" / "labels.pt").numpy().squeeze()
+            X_test = torch.load(data_path / "test" / "data.pt", weights_only=True).numpy()
+            y_test = torch.load(data_path / "test" / "labels.pt", weights_only=True).numpy().squeeze()
         elif (data_path / "val" / "data.pt").exists():
-            X_test = torch.load(data_path / "val" / "data.pt").numpy()
-            y_test = torch.load(data_path / "val" / "labels.pt").numpy().squeeze()
+            X_test = torch.load(data_path / "val" / "data.pt", weights_only=True).numpy()
+            y_test = torch.load(data_path / "val" / "labels.pt", weights_only=True).numpy().squeeze()
         else:
             raise FileNotFoundError(f"No test or val folder in {data_path}")
         
@@ -285,7 +313,7 @@ def train_model(
     output_dir: str,
     epochs: int = 50,
     batch_size: int = 64,
-    lr: float = 3e-3,
+    lr: float = 5e-4,
     use_pretrained: bool = False,
     pretrained_encoder: str = "cbramod",
     focal_gamma: float = 1.0,
@@ -347,8 +375,10 @@ def train_model(
 
     # Optimizer
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer, T_0=10, T_mult=2
+    scheduler = WarmupCosineScheduler(
+        optimizer,
+        warmup_epochs=5,
+        total_epochs=epochs,
     )
 
     # Mixed precision
@@ -364,6 +394,9 @@ def train_model(
     output_path.mkdir(parents=True, exist_ok=True)
 
     for epoch in range(epochs):
+        # Warmup + cosine LR schedule (step before training so warmup is active from epoch 1)
+        scheduler.step(epoch)
+
         # Train
         train_loss = train_one_epoch(
             model, train_loader, criterion, optimizer, device, scaler,
@@ -371,11 +404,15 @@ def train_model(
             label_smoothing=label_smoothing,
         )
 
+        # Sanity check: warn if loss collapses in early epochs
+        if epoch < 5 and train_loss < 1e-3:
+            print(
+                f"  WARNING: Loss={train_loss:.6f} near zero at epoch {epoch+1}. "
+                "Possible AMP FP16 underflow, LR too high, or degenerate data."
+            )
+
         # Evaluate
         metrics = evaluate(model, test_loader, device)
-
-        # Update scheduler
-        scheduler.step()
 
         # Log
         history["train_loss"].append(train_loss)
@@ -445,7 +482,7 @@ def main():
     parser.add_argument("--output_dir", type=str, default="./checkpoints")
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--lr", type=float, default=3e-3)
+    parser.add_argument("--lr", type=float, default=5e-4)
     parser.add_argument("--pretrained", action="store_true", help="Use pretrained encoder")
     parser.add_argument("--encoder", type=str, default="cbramod", 
                        help="Pretrained encoder: cbramod, eegpt, biot, labram")
