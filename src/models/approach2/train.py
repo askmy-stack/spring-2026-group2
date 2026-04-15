@@ -55,6 +55,9 @@ class FocalLoss(nn.Module):
         self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight, reduction="none")
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        # Cast to float32 to prevent FP16 underflow inside torch.amp.autocast
+        logits = logits.float()
+        targets = targets.float()
         bce_loss = self.bce(logits, targets)
         probs = torch.sigmoid(logits)
         pt = torch.where(targets == 1, probs, 1 - probs)
