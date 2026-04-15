@@ -120,7 +120,7 @@ def train_one_epoch(
 
         optimizer.zero_grad()
 
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with torch.amp.autocast('cuda', enabled=use_amp):
             # Handle models that return multiple outputs (e.g., VQ-Transformer)
             output = model(x_batch)
             if isinstance(output, tuple):
@@ -339,7 +339,7 @@ def train_model(
     )
 
     # Mixed precision
-    scaler = torch.cuda.amp.GradScaler(enabled=device.type == "cuda")
+    scaler = torch.amp.GradScaler('cuda', enabled=device.type == "cuda")
     use_amp = device.type == "cuda"
 
     # Training loop

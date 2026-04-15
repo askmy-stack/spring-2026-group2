@@ -102,7 +102,15 @@ def train_preictal(args):
 
     # Load data
     data_path = Path(args.data_path)
-    if (data_path / "X_windows.npy").exists():
+    
+    # Try tensors format first
+    train_data_pt = data_path / "train" / "data.pt"
+    if train_data_pt.exists():
+        print(f"Loading tensor data from {data_path}")
+        X = torch.load(data_path / "train" / "data.pt").numpy().astype(np.float32)
+        y = torch.load(data_path / "train" / "labels.pt").numpy().squeeze().astype(np.float32)
+        print(f"Loaded {len(X)} samples")
+    elif (data_path / "X_windows.npy").exists():
         X = np.load(data_path / "X_windows.npy")
         y = np.load(data_path / "y_windows.npy")
         print(f"Loaded {len(X)} samples")

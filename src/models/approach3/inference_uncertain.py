@@ -98,7 +98,19 @@ def main():
 
     # Load test data
     data_path = Path(args.data_path)
-    if (data_path / "X_windows.npy").exists():
+    
+    # Try tensors format first
+    test_data_pt = data_path / "test" / "data.pt"
+    val_data_pt = data_path / "val" / "data.pt"
+    if test_data_pt.exists():
+        print(f"Loading tensor data from {data_path}/test")
+        X = torch.load(test_data_pt).numpy().astype(np.float32)[:100]
+        y = torch.load(data_path / "test" / "labels.pt").numpy().squeeze().astype(np.float32)[:100]
+    elif val_data_pt.exists():
+        print(f"Loading tensor data from {data_path}/val")
+        X = torch.load(val_data_pt).numpy().astype(np.float32)[:100]
+        y = torch.load(data_path / "val" / "labels.pt").numpy().squeeze().astype(np.float32)[:100]
+    elif (data_path / "X_windows.npy").exists():
         X = np.load(data_path / "X_windows.npy")
         y = np.load(data_path / "y_windows.npy")
         # Use subset for demo
