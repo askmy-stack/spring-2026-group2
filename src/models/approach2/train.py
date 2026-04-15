@@ -62,13 +62,13 @@ class FocalLoss(nn.Module):
         targets = targets.float()
         bce_loss = self.bce(logits, targets)
         probs = torch.sigmoid(logits)
-        pt = torch.where(targets == 1, probs, 1 - probs)
+        pt = torch.where(targets > 0.5, probs, 1 - probs)
         focal_weight = (1 - pt) ** self.gamma
         focal_loss = focal_weight * bce_loss
         # Apply pos_weight as flat per-sample multiplier after focal modulation
         if self.pos_weight is not None:
             class_weight = torch.where(
-                targets == 1,
+                targets > 0.5,
                 self.pos_weight.expand_as(targets),
                 torch.ones_like(targets),
             )
