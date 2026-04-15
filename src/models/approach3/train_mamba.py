@@ -43,6 +43,27 @@ class FocalLoss(nn.Module):
 
 def load_data(data_path: str) -> Tuple:
     data_path = Path(data_path)
+    
+    # Try tensors format first (train/data.pt, train/labels.pt)
+    train_data_pt = data_path / "train" / "data.pt"
+    if train_data_pt.exists():
+        print(f"Loading tensor data from {data_path}")
+        X_train = torch.load(data_path / "train" / "data.pt").numpy().astype(np.float32)
+        y_train = torch.load(data_path / "train" / "labels.pt").numpy().squeeze().astype(np.float32)
+        
+        # Load test or val
+        if (data_path / "test" / "data.pt").exists():
+            X_test = torch.load(data_path / "test" / "data.pt").numpy().astype(np.float32)
+            y_test = torch.load(data_path / "test" / "labels.pt").numpy().squeeze().astype(np.float32)
+        elif (data_path / "val" / "data.pt").exists():
+            X_test = torch.load(data_path / "val" / "data.pt").numpy().astype(np.float32)
+            y_test = torch.load(data_path / "val" / "labels.pt").numpy().squeeze().astype(np.float32)
+        else:
+            raise FileNotFoundError(f"No test or val folder in {data_path}")
+        
+        return X_train, X_test, y_train, y_test
+    
+    # Try .npy format
     x_path = data_path / "X_windows.npy"
     y_path = data_path / "y_windows.npy"
 

@@ -273,8 +273,47 @@ def train_and_evaluate(model, train_loader, val_loader, pos_weight,
 # Main
 # ─────────────────────────────────────────────────────────────
 
+def load_real_data(data_path: str):
+    """
+    Load real EEG data from tensors folder.
+    
+    Expected structure:
+        data_path/train/data.pt, labels.pt
+        data_path/test/data.pt, labels.pt (or val/)
+    
+    Returns:
+        X_train, X_test, y_train, y_test as torch tensors
+    """
+    from pathlib import Path
+    data_path = Path(data_path)
+    
+    # Load train data
+    train_data = torch.load(data_path / "train" / "data.pt")
+    train_labels = torch.load(data_path / "train" / "labels.pt")
+    
+    # Load test/val data
+    if (data_path / "test" / "data.pt").exists():
+        test_data = torch.load(data_path / "test" / "data.pt")
+        test_labels = torch.load(data_path / "test" / "labels.pt")
+    elif (data_path / "val" / "data.pt").exists():
+        test_data = torch.load(data_path / "val" / "data.pt")
+        test_labels = torch.load(data_path / "val" / "labels.pt")
+    else:
+        raise FileNotFoundError(f"No test or val folder found in {data_path}")
+    
+    # Ensure float32 for data and long for labels
+    X_train = train_data.float()
+    X_test = test_data.float()
+    y_train = train_labels.float().squeeze()
+    y_test = test_labels.float().squeeze()
+    
+    return X_train, X_test, y_train, y_test
+
+
 def parse_args():
     p = argparse.ArgumentParser()
+    p.add_argument("--data_path",  type=str,   default=None,
+                   help="Path to tensors folder (e.g., ../results/tensors/chbmit). If not provided, uses synthetic data.")
     p.add_argument("--epochs",     type=int,   default=20)
     p.add_argument("--n_samples",  type=int,   default=4000)
     p.add_argument("--batch_size", type=int,   default=64)
@@ -306,27 +345,72 @@ def main():
     SEQ_LEN    = 256
     N_FEATURES = 226
 
+    # ── Load data ──
+    if args.data_path:
+        print(f"\nLoading real EEG data from {args.data_path}...")
+        X_train, X_test, y_train, y_test = load_real_data(args.data_path)
+        n_samples = len(X_train) + len(X_test)
+        use_real_data = True
+    else:
+        print("\nGenerating synthetic EEG data...")
+        X_raw, y_raw = generate_eeg_data(
+            n_samples=args.n_samples, n_channels=N_CHANNELS,
+            seq_len=SEQ_LEN, seed=args.seed
+        )
+        # Split synthetic data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_raw, y_raw, test_size=args.val_split, random_state=args.seed, stratify=y_raw
+        )
+        n_samples = args.n_samples
+        use_real_data = False
+
+    n_sz_train = int(y_train.sum().item())
+    n_sz_test = int(y_test.sum().item())
+    
     print(f"\n{'='*65}")
     print(f"  EEG LSTM Improved Models Benchmark")
-    print(f"  Device: {device} | Epochs: {args.epochs} | Samples: {args.n_samples}")
+    print(f"  Device: {device} | Epochs: {args.epochs}")
+    print(f"  Data: {'REAL CHB-MIT' if use_real_data else 'Synthetic'}")
+    print(f"  Train: {len(X_train)} samples (seizure={n_sz_train})")
+    print(f"  Test:  {len(X_test)} samples (seizure={n_sz_test})")
     print(f"{'='*65}")
 
-    # ── Generate data ──
-    print("\nGenerating synthetic EEG data...")
-    X_raw, y_raw = generate_eeg_data(
-        n_samples=args.n_samples, n_channels=N_CHANNELS,
-        seq_len=SEQ_LEN, seed=args.seed
+    # Create data loaders
+    n_pos = y_train.sum().item()
+    n_neg = len(y_train) - n_pos
+    raw_pw = n_neg / max(n_pos, 1)
+    
+    raw_train = DataLoader(
+        TensorDataset(X_train, y_train), batch_size=args.batch_size,
+        shuffle=True, pin_memory=torch.cuda.is_available(),
     )
-    X_feat, y_feat = generate_feature_data(
-        n_samples=args.n_samples, n_features=N_FEATURES, seed=args.seed
+    raw_val = DataLoader(
+        TensorDataset(X_test, y_test), batch_size=args.batch_size,
+        shuffle=False, pin_memory=torch.cuda.is_available(),
     )
-    n_sz = y_raw.sum().item()
-    print(f"  Raw EEG shape:  {tuple(X_raw.shape)}  "
-          f"(seizure={n_sz}, background={len(y_raw)-n_sz})")
-    print(f"  Feature shape:  {tuple(X_feat.shape)}")
-
-    raw_train,  raw_val,  raw_pw  = make_loaders(X_raw,  y_raw,  args.val_split, args.batch_size, args.seed)
-    feat_train, feat_val, feat_pw = make_loaders(X_feat, y_feat, args.val_split, args.batch_size, args.seed)
+    
+    # For feature_bilstm, generate synthetic features (or skip if using real data)
+    if use_real_data:
+        # Use a subset of real data reshaped for feature model
+        X_feat = X_train[:, :, :226].reshape(len(X_train), -1)[:, :N_FEATURES]
+        y_feat = y_train
+        X_feat_test = X_test[:, :, :226].reshape(len(X_test), -1)[:, :N_FEATURES]
+        y_feat_test = y_test
+    else:
+        X_feat, y_feat = generate_feature_data(
+            n_samples=args.n_samples, n_features=N_FEATURES, seed=args.seed
+        )
+        X_feat, X_feat_test, y_feat, y_feat_test = train_test_split(
+            X_feat, y_feat, test_size=args.val_split, random_state=args.seed, stratify=y_feat
+        )
+    
+    feat_pw = raw_pw
+    feat_train = DataLoader(
+        TensorDataset(X_feat, y_feat), batch_size=args.batch_size, shuffle=True
+    )
+    feat_val = DataLoader(
+        TensorDataset(X_feat_test, y_feat_test), batch_size=args.batch_size, shuffle=False
+    )
 
     # ── Also print BASELINE for reference ──
     baseline_path = os.path.join(
