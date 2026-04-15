@@ -22,6 +22,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, roc_auc_score, confusion_matrix
 
+# Add current directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
+
 from architectures import get_model, list_models
 
 

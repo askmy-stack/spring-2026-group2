@@ -20,8 +20,9 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import f1_score, roc_auc_score
 
-# Add paths
-sys.path.insert(0, str(Path(__file__).parent.parent / "approach2"))
+# Add paths for imports
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from architectures import get_model as get_student_model
 from architectures.tiny_seizure_net import MultiTeacherDistillation, TinySeizureNet, MicroSeizureNet
