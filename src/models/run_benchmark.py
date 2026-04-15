@@ -391,13 +391,16 @@ def main():
         f1_delta  = metrics['f1']      - base.get('f1', 0)
         sen_delta = metrics['sensitivity'] - base.get('sensitivity', 0)
         auc_delta = metrics['auc_roc'] - base.get('auc', 0)
+        base_sen = base.get('sensitivity')
         print(f"  Sensitivity: {metrics['sensitivity']:.4f}  "
-              f"(baseline={base.get('sensitivity', 'N/A'):.3f}  Δ={sen_delta:+.3f})")
+              f"(baseline={base_sen:.3f if base_sen is not None else 'N/A'}  Δ={sen_delta:+.3f})")
         print(f"  Specificity: {metrics['specificity']:.4f}")
+        base_f1 = base.get('f1')
         print(f"  F1 Score:    {metrics['f1']:.4f}  "
-              f"(baseline={base.get('f1', 'N/A'):.3f}  Δ={f1_delta:+.3f})")
+              f"(baseline={base_f1:.3f if base_f1 is not None else 'N/A'}  Δ={f1_delta:+.3f})")
+        base_auc = base.get('auc')
         print(f"  AUC-ROC:     {metrics['auc_roc']:.4f}  "
-              f"(baseline={base.get('auc', 'N/A'):.3f}  Δ={auc_delta:+.3f})")
+              f"(baseline={base_auc:.3f if base_auc is not None else 'N/A'}  Δ={auc_delta:+.3f})")
         print(f"  Confusion:   TP={metrics['tp']} FP={metrics['fp']} "
               f"TN={metrics['tn']} FN={metrics['fn']}")
         print(f"  Train time:  {metrics['train_time_sec']}s")
