@@ -32,11 +32,14 @@ from sklearn.metrics import (
 )
 
 # Add parent directory for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from architectures import MODEL_REGISTRY
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PARENT_DIR = os.path.dirname(SCRIPT_DIR)
+sys.path.insert(0, PARENT_DIR)
+sys.path.insert(0, SCRIPT_DIR)
 
-from .augmentation import EEGAugmentation, MixUp, mixup_criterion
-from .ensemble import EnsemblePredictor, compute_ensemble_weights, train_stacking_ensemble
+from architectures import MODEL_REGISTRY
+from augmentation import EEGAugmentation, MixUp, mixup_criterion
+from ensemble import EnsemblePredictor, compute_ensemble_weights, train_stacking_ensemble
 
 
 # ─────────────────────────────────────────────────────────────────────────────
