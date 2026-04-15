@@ -107,8 +107,8 @@ class SelectiveSSM(nn.Module):
             y = (h * C[:, t]).sum(dim=-1, keepdim=True)
             ys.append(y)
 
-        y = torch.cat(ys, dim=1)  # (batch, seq_len, 1)
-        y = y.expand(-1, -1, self.d_inner)
+        y = torch.stack(ys, dim=1)  # (batch, seq_len, 1)
+        y = y.expand(-1, -1, self.d_inner)  # (batch, seq_len, d_inner)
 
         # Skip connection
         y = y + x * self.D
