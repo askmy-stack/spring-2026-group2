@@ -46,6 +46,10 @@ class EnsemblePredictor(nn.Module):
         self.models = nn.ModuleList(models)
         self.strategy = strategy
         self.threshold = threshold
+
+        # Set base models to inference mode once at construction (not inside forward)
+        for m in self.models:
+            m.eval()
         
         # Normalize weights
         if weights is not None:
@@ -74,10 +78,9 @@ class EnsemblePredictor(nn.Module):
         Returns:
             Ensemble logits (batch, 1)
         """
-        # Get predictions from all models
+        # Get predictions from all models (base models must already be in eval mode)
         all_logits = []
         for model in self.models:
-            model.eval()
             with torch.no_grad():
                 logits = model(x)
                 all_logits.append(logits)
@@ -151,7 +154,7 @@ class EnsemblePredictor(nn.Module):
         models = []
         for path, model_cls, kwargs in zip(checkpoint_paths, model_classes, model_kwargs):
             model = model_cls(**kwargs)
-            state_dict = torch.load(path, map_location=device)
+            state_dict = torch.load(path, map_location=device, weights_only=True)
             model.load_state_dict(state_dict)
             model.to(device)
             model.eval()
@@ -303,7 +306,8 @@ def train_stacking_ensemble(
                 val_loss += criterion(logits, y_batch).item()
                 n_batches += 1
         
-        val_loss /= n_batches
+        if n_batches > 0:
+            val_loss /= n_batches
         if val_loss < best_loss:
             best_loss = val_loss
     

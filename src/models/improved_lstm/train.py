@@ -31,15 +31,19 @@ from sklearn.metrics import (
     precision_score, recall_score, confusion_matrix, roc_curve,
 )
 
-# Add parent directory for imports
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = os.path.dirname(SCRIPT_DIR)
-sys.path.insert(0, PARENT_DIR)
-sys.path.insert(0, SCRIPT_DIR)
-
-from architectures import MODEL_REGISTRY
-from augmentation import EEGAugmentation, MixUp, mixup_criterion
-from ensemble import EnsemblePredictor, compute_ensemble_weights, train_stacking_ensemble
+# Support both direct script execution and package import
+try:
+    from .augmentation import EEGAugmentation, MixUp, mixup_criterion
+    from .ensemble import EnsemblePredictor, compute_ensemble_weights, train_stacking_ensemble
+    from ..architectures import MODEL_REGISTRY
+except ImportError:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PARENT_DIR = os.path.dirname(SCRIPT_DIR)
+    sys.path.insert(0, PARENT_DIR)
+    sys.path.insert(0, SCRIPT_DIR)
+    from architectures import MODEL_REGISTRY
+    from augmentation import EEGAugmentation, MixUp, mixup_criterion
+    from ensemble import EnsemblePredictor, compute_ensemble_weights, train_stacking_ensemble
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,18 +134,28 @@ class FocalLoss(nn.Module):
         # Apply label smoothing
         if self.label_smoothing > 0:
             targets = targets * (1 - self.label_smoothing) + 0.5 * self.label_smoothing
-        
-        # BCE loss
+
+        # BCE loss without pos_weight so focal modulation applies uniformly
         bce_loss = nn.functional.binary_cross_entropy_with_logits(
-            logits, targets, pos_weight=self.pos_weight, reduction='none'
+            logits, targets, reduction='none'
         )
-        
+
         # Focal weight
         probs = torch.sigmoid(logits)
         pt = torch.where(targets > 0.5, probs, 1 - probs)
         focal_weight = (1 - pt) ** self.gamma
-        
-        return (focal_weight * bce_loss).mean()
+        focal_loss = focal_weight * bce_loss
+
+        # Apply pos_weight as flat per-sample multiplier (after focal modulation)
+        if self.pos_weight is not None:
+            class_weight = torch.where(
+                targets > 0.5,
+                self.pos_weight.expand_as(targets),
+                torch.ones_like(targets),
+            )
+            focal_loss = focal_loss * class_weight
+
+        return focal_loss.mean()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -277,10 +291,14 @@ class ImprovedTrainer:
             X_batch = X_batch.to(self.device)
             y_batch = y_batch.to(self.device).float().unsqueeze(1)
             
-            # Augmentation
+            # Augmentation (augment_batch also oversamples minority seizure class)
             if self.augmenter is not None:
-                self.augmenter.train()
-                X_batch = self.augmenter(X_batch)
+                try:
+                    from .augmentation import augment_batch
+                except ImportError:
+                    from augmentation import augment_batch
+                X_batch, y_batch = augment_batch(X_batch, y_batch.squeeze(1), self.augmenter)
+                y_batch = y_batch.unsqueeze(1)
             
             # MixUp
             use_mixup = self.mixup is not None and np.random.rand() < 0.5
@@ -341,17 +359,20 @@ class ImprovedTrainer:
             'f1': float(f1_score(labels, preds, zero_division=0)),
             'auc_roc': float(roc_auc_score(labels, probs)) if len(np.unique(labels)) > 1 else 0.0,
             'threshold': round(thresh, 4),
-            'val_loss': val_loss / n_batches,
+            'val_loss': val_loss / n_batches if n_batches > 0 else 0.0,
             'tp': int(tp), 'fp': int(fp), 'tn': int(tn), 'fn': int(fn),
         }
     
     @staticmethod
     def _find_optimal_threshold(y_true, y_prob):
         """Youden's J: threshold that maximizes sensitivity + specificity."""
+        if len(np.unique(y_true)) < 2:
+            return 0.5
         fpr, tpr, thresholds = roc_curve(y_true, y_prob)
         j_scores = tpr - fpr
         best_idx = int(np.argmax(j_scores))
-        return float(thresholds[best_idx])
+        # sklearn prepends a synthetic threshold > max(y_prob); clip to [0, 1]
+        return float(np.clip(thresholds[best_idx], 0.0, 1.0))
     
     def save(self, path: str):
         """Save model checkpoint."""
@@ -364,7 +385,7 @@ class ImprovedTrainer:
     
     def load(self, path: str):
         """Load model checkpoint."""
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=True)
         self.model.load_state_dict(checkpoint['model_state'])
         self.config = checkpoint.get('config', self.config)
         self.best_f1 = checkpoint.get('best_f1', -1.0)
@@ -380,16 +401,16 @@ def load_real_data(data_path: str) -> Tuple[torch.Tensor, torch.Tensor, torch.Te
     data_path = Path(data_path)
     
     # Load training data
-    train_data = torch.load(data_path / "train" / "data.pt")
-    train_labels = torch.load(data_path / "train" / "labels.pt")
+    train_data = torch.load(data_path / "train" / "data.pt", weights_only=True)
+    train_labels = torch.load(data_path / "train" / "labels.pt", weights_only=True)
     
     # Load test/val data
     if (data_path / "test" / "data.pt").exists():
-        test_data = torch.load(data_path / "test" / "data.pt")
-        test_labels = torch.load(data_path / "test" / "labels.pt")
+        test_data = torch.load(data_path / "test" / "data.pt", weights_only=True)
+        test_labels = torch.load(data_path / "test" / "labels.pt", weights_only=True)
     elif (data_path / "val" / "data.pt").exists():
-        test_data = torch.load(data_path / "val" / "data.pt")
-        test_labels = torch.load(data_path / "val" / "labels.pt")
+        test_data = torch.load(data_path / "val" / "data.pt", weights_only=True)
+        test_labels = torch.load(data_path / "val" / "labels.pt", weights_only=True)
     else:
         raise FileNotFoundError(f"No test or val data found in {data_path}")
     
@@ -613,7 +634,7 @@ def train_ensemble(
         'sensitivity': float(recall_score(labels, preds, zero_division=0)),
         'specificity': float(tn / (tn + fp)) if (tn + fp) > 0 else 0.0,
         'f1': float(f1_score(labels, preds, zero_division=0)),
-        'auc_roc': float(roc_auc_score(labels, probs)),
+        'auc_roc': float(roc_auc_score(labels, probs)) if len(np.unique(labels)) > 1 else 0.0,
         'threshold': thresh,
         'strategy': strategy,
         'weights': weights,
