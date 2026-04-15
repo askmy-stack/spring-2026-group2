@@ -99,9 +99,11 @@ def train(args):
     model = get_model(args.model, n_channels=16, time_steps=256).to(device)
     print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
 
-    # Loss and optimizer
-    pos_weight = torch.tensor([y_train.sum() / (len(y_train) - y_train.sum())]).to(device)
-    criterion = FocalLoss(gamma=2.0, pos_weight=pos_weight)
+    # Loss and optimizer - pos_weight = n_neg/n_pos to upweight minority class
+    n_pos = y_train.sum()
+    n_neg = len(y_train) - n_pos
+    pos_weight = torch.tensor([n_neg / max(n_pos, 1)]).to(device)
+    criterion = FocalLoss(gamma=1.0, pos_weight=pos_weight)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
