@@ -88,16 +88,16 @@ class SelectiveSSM(nn.Module):
         deltaB_x = delta * B * convolved[:, :, :self.d_state]  # (batch, seq, d_state)
 
         # Vectorized scan: h[t] = deltaA[t]*h[t-1] + deltaB_x[t]
-        # Use log-space cumsum for the multiplicative coefficients
-        log_dA = torch.log(deltaA.clamp(min=1e-6))     # (batch, seq, d_state)
-        log_dA_cumsum = torch.cumsum(log_dA, dim=1)     # cumulative product in log-space
-        # Scale input by inverse cumulative product, cumsum, then rescale
+        # Log-space cumsum for numerically stable cumulative products
+        log_dA = torch.log(deltaA.clamp(min=1e-6))           # (batch, seq, d_state)
+        log_dA_cumsum = torch.cumsum(log_dA, dim=1).clamp(max=0)  # clamp prevents exp overflow
         scaled_input = deltaB_x * torch.exp(-log_dA_cumsum)
         hidden_states = torch.cumsum(scaled_input, dim=1) * torch.exp(log_dA_cumsum)
         # (batch, seq, d_state)
 
-        outputs = (hidden_states * C).sum(dim=-1, keepdim=True)  # (batch, seq, 1)
-        return outputs.expand(-1, -1, self.d_inner)
+        # Return (batch, seq, 1) — broadcast against (batch, seq, d_inner) in _project_output
+        # DO NOT use .expand() here: it causes 256x gradient amplification during backprop → NaN
+        return (hidden_states * C).sum(dim=-1, keepdim=True)  # (batch, seq, 1)
 
     def _project_output(
         self, ssm_out: torch.Tensor, gated: torch.Tensor, convolved: torch.Tensor
