@@ -3,6 +3,7 @@ LSTM Benchmark Model Architectures — m1 through m6.
 
 Input contract for all models: (batch, n_channels, time_steps) -> logits (batch, 1).
 """
+import inspect
 from typing import Dict, Type
 
 import torch.nn as nn
@@ -52,4 +53,8 @@ def get_benchmark_model(model_name: str, **kwargs: object) -> nn.Module:
         raise ValueError(
             f"Unknown model '{model_name}'. Available: {sorted(MODEL_REGISTRY.keys())}"
         )
-    return MODEL_REGISTRY[key](**kwargs)
+    model_cls = MODEL_REGISTRY[key]
+    sig = inspect.signature(model_cls.__init__)
+    valid_params = {k for k in sig.parameters if k != "self"}
+    filtered = {k: v for k, v in kwargs.items() if k in valid_params}
+    return model_cls(**filtered)
