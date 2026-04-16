@@ -244,7 +244,7 @@ def _load_data(args: argparse.Namespace, config_path: Path):
     samples = int(cfg.get("windowing", {}).get("window_sec", 1.0) * sfreq)
     train_dl, val_dl, test_dl = get_dataloaders(
         batch_size=args.batch_size, num_workers=args.num_workers,
-        augment_train=args.train_augment, config_path=str(config_path),
+        augment_train=args.train_augment,
     )
     return train_dl, val_dl, test_dl, channels, samples, sfreq
 
