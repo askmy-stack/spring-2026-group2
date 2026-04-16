@@ -92,7 +92,9 @@ def train_improved(data_path: Path, config: Dict) -> Dict:
     ckpt_dir = Path(config["outputs"]["checkpoint_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     stopper = EarlyStopping(
-        patience=config["training"]["early_stopping_patience"],
+        patience=config["models"]["improved_lstm"].get(
+            "early_stopping_patience", config["training"]["early_stopping_patience"]
+        ),
         checkpoint_path=ckpt_dir / "improved_lstm_best.pt",
     )
     _run_training_loop(model, train_loader, val_loader, augmenter, criterion, optimizer, scheduler, stopper, config, device)
@@ -207,19 +209,23 @@ def _build_criterion(config: Dict, device: torch.device) -> nn.Module:
 
 
 def _build_optimizer(model: nn.Module, config: Dict) -> torch.optim.AdamW:
-    """Build AdamW optimizer from config."""
+    """Build AdamW optimizer from config, with improved_lstm overrides if present."""
+    lr = config["models"]["improved_lstm"].get(
+        "learning_rate", config["training"]["learning_rate"]
+    )
     return torch.optim.AdamW(
         model.parameters(),
-        lr=config["training"]["learning_rate"],
+        lr=lr,
         weight_decay=config["training"]["weight_decay"],
     )
 
 
 def _build_scheduler(optimizer: torch.optim.Optimizer, config: Dict) -> WarmupCosineScheduler:
-    """Build WarmupCosineScheduler from config."""
+    """Build WarmupCosineScheduler from config, with improved_lstm overrides if present."""
+    cfg_m = config["models"]["improved_lstm"]
     return WarmupCosineScheduler(
         optimizer,
-        warmup_epochs=config["training"]["warmup_epochs"],
+        warmup_epochs=cfg_m.get("warmup_epochs", config["training"]["warmup_epochs"]),
         total_epochs=config["training"]["num_epochs"],
     )
 
