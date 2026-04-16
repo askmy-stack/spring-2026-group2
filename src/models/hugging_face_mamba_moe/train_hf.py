@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 def parse_args() -> argparse.Namespace:
     """Build and return CLI argument parser."""
     parser = argparse.ArgumentParser(description="Train HF EEG models via cached dataloader.")
-    parser.add_argument("--model", default="baseline_cnn_1d", choices=list_hf_models())
+    parser.add_argument("--model", default="baseline_cnn_1d", choices=["all"] + list_hf_models())
     parser.add_argument("--run_name", default="", help="Optional suffix for results directory.")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch_size", type=int, default=32)
@@ -49,28 +49,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--patience", type=int, default=7)
     parser.add_argument("--num_classes", type=int, default=2)
     parser.add_argument("--freeze_backbone", action="store_true")
     parser.add_argument("--train_augment", action="store_true")
-    parser.add_argument("--loss", default="ce", choices=("ce", "focal"))
+    parser.add_argument("--loss", default="focal", choices=("ce", "focal"))
     parser.add_argument("--focal_gamma", type=float, default=2.0)
     parser.add_argument("--focal_alpha", type=float, default=0.25)
-    parser.add_argument("--threshold_mode", default="fixed", choices=("fixed", "tune"))
-    parser.add_argument("--decision_threshold", type=float, default=0.5)
+    parser.add_argument("--threshold_mode", default="tune", choices=("fixed", "tune"))
+    parser.add_argument("--decision_threshold", type=float, default=0.35)
     parser.add_argument("--smoothing_mode", default="none", choices=("none", "moving_average", "consecutive"))
     parser.add_argument("--smoothing_window", type=int, default=5)
     parser.add_argument("--min_positive_run", type=int, default=2)
-    parser.add_argument("--grad_clip_norm", type=float, default=0.0)
+    parser.add_argument("--grad_clip_norm", type=float, default=1.0)
     parser.add_argument("--config_path", default="src/data_loader/config.yaml")
     parser.add_argument("--data_path", default="", help="Path to pre-processed tensors (train/val/test with data.pt & labels.pt). If set, bypasses cache loader.")
     return parser.parse_args()
 
 
-def main() -> None:
-    """CLI entry point: set up, train, evaluate on test set."""
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    args = parse_args()
+def _train_single_model(args: argparse.Namespace) -> None:
+    """Train a single HF model end-to-end."""
     _set_seed(args.seed)
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
     config_path = Path(args.config_path).resolve()
@@ -82,6 +80,24 @@ def main() -> None:
     _save_config(logs_dir, args, channels, samples, sfreq, str(device), config_path)
     _training_loop(model, train_dl, val_dl, test_dl, criterion, optimizer,
                    device, args, ckpt_dir, logs_dir, results_root)
+
+
+def main() -> None:
+    """CLI entry point: set up, train, evaluate on test set."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    args = parse_args()
+    if args.model == "all":
+        for model_name in list_hf_models():
+            logger.info("=" * 60)
+            logger.info("Training HF model: %s", model_name)
+            logger.info("=" * 60)
+            args.model = model_name
+            try:
+                _train_single_model(args)
+            except Exception as e:
+                logger.error("Model %s FAILED: %s", model_name, e)
+    else:
+        _train_single_model(args)
 
 
 def _training_loop(
