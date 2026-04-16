@@ -98,6 +98,10 @@ def train_improved(data_path: Path, config: Dict) -> Dict:
         checkpoint_path=ckpt_dir / "improved_lstm_best.pt",
     )
     _run_training_loop(model, train_loader, val_loader, augmenter, criterion, optimizer, scheduler, stopper, config, device)
+    best_ckpt = ckpt_dir / "improved_lstm_best.pt"
+    if best_ckpt.exists():
+        model.load_state_dict(torch.load(best_ckpt, map_location=device, weights_only=True))
+        logger.info("Loaded best checkpoint for test evaluation.")
     return _evaluate_improved_on_test(model, test_loader, device)
 
 
@@ -109,15 +113,31 @@ def _run_training_loop(
 ) -> None:
     """Run epochs with augmentation until early stopping or num_epochs reached."""
     num_epochs = config["training"]["num_epochs"]
+    best_val_f1, no_improve = 0.0, 0
+    patience = config["models"]["improved_lstm"].get(
+        "early_stopping_patience", config["training"]["early_stopping_patience"]
+    )
+    ckpt_path = stopper.checkpoint_path
     for epoch in range(num_epochs):
         train_loss = _train_one_epoch(model, train_loader, augmenter, criterion, optimizer, config, device)
         val_loss = _validate_one_epoch(model, val_loader, criterion, device)
+        val_metrics = _evaluate_improved_on_test(model, val_loader, device)
+        val_f1 = val_metrics["f1"]
         scheduler.step()
-        stopper.step(val_loss, model)
-        logger.info("Epoch %d/%d — train=%.4f val=%.4f", epoch + 1, num_epochs, train_loss, val_loss)
-        if stopper.should_stop:
-            logger.info("Early stopping triggered.")
-            break
+        logger.info("Epoch %d/%d — train=%.4f val_loss=%.4f val_f1=%.4f",
+                    epoch + 1, num_epochs, train_loss, val_loss, val_f1)
+        if val_f1 > best_val_f1 + 1e-4:
+            best_val_f1 = val_f1
+            no_improve = 0
+            if ckpt_path is not None:
+                torch.save(model.state_dict(), ckpt_path)
+                logger.info("  Checkpoint saved (val_f1=%.4f)", val_f1)
+        else:
+            no_improve += 1
+            if no_improve >= patience:
+                logger.info("Early stopping at epoch %d (patience=%d, best_val_f1=%.4f).",
+                            epoch + 1, patience, best_val_f1)
+                break
 
 
 def _train_one_epoch(
