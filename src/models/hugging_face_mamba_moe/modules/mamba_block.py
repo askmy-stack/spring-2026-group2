@@ -15,6 +15,24 @@ import torch.nn.functional as F
 logger = logging.getLogger(__name__)
 
 
+@torch.jit.script
+def _ssm_scan(
+    deltaA: torch.Tensor,
+    deltaB_x: torch.Tensor,
+    C: torch.Tensor,
+) -> torch.Tensor:
+    """Compiled sequential SSM scan: h[t]=deltaA[t]*h[t-1]+deltaB_x[t], y[t]=C[t]·h[t]."""
+    batch: int = deltaA.shape[0]
+    seq_len: int = deltaA.shape[1]
+    d_state: int = deltaA.shape[2]
+    hidden = torch.zeros(batch, d_state, dtype=deltaA.dtype, device=deltaA.device)
+    out = torch.empty(batch, seq_len, 1, dtype=deltaA.dtype, device=deltaA.device)
+    for t in range(seq_len):
+        hidden = deltaA[:, t, :] * hidden + deltaB_x[:, t, :]
+        out[:, t, :] = (hidden * C[:, t, :]).sum(dim=1, keepdim=True)
+    return out
+
+
 class SelectiveSSM(nn.Module):
     """
     Selective State Space Model (S6) — core Mamba operation.
@@ -79,25 +97,15 @@ class SelectiveSSM(nn.Module):
         return convolved, gated
 
     def _apply_ssm(self, convolved: torch.Tensor, batch: int, seq_len: int) -> torch.Tensor:
-        """Run selective scan via vectorized parallel prefix sum (no Python loop)."""
+        """Run selective scan via compiled sequential loop (numerically stable, no Python overhead)."""
         x_dbl = self.x_proj(convolved)
         delta, B, C = torch.split(x_dbl, [1, self.d_state, self.d_state], dim=-1)
-        delta = F.softplus(delta)                       # (batch, seq, 1)
-        A = -torch.exp(self.A_log)                      # (d_state,)
-        deltaA = torch.exp(delta * A)                   # (batch, seq, d_state)
+        delta = F.softplus(delta)                # (batch, seq, 1)
+        A = -torch.exp(self.A_log)               # (d_state,)
+        deltaA = torch.exp(delta * A)            # (batch, seq, d_state); values in (0,1)
         deltaB_x = delta * B * convolved[:, :, :self.d_state]  # (batch, seq, d_state)
-
-        # Vectorized scan: h[t] = deltaA[t]*h[t-1] + deltaB_x[t]
-        # Log-space cumsum for numerically stable cumulative products
-        log_dA = torch.log(deltaA.clamp(min=1e-6))           # (batch, seq, d_state)
-        log_dA_cumsum = torch.cumsum(log_dA, dim=1).clamp(max=0)  # clamp prevents exp overflow
-        scaled_input = deltaB_x * torch.exp(-log_dA_cumsum)
-        hidden_states = torch.cumsum(scaled_input, dim=1) * torch.exp(log_dA_cumsum)
-        # (batch, seq, d_state)
-
-        # Return (batch, seq, 1) — broadcast against (batch, seq, d_inner) in _project_output
-        # DO NOT use .expand() here: it causes 256x gradient amplification during backprop → NaN
-        return (hidden_states * C).sum(dim=-1, keepdim=True)  # (batch, seq, 1)
+        # Return (batch, seq, 1) — broadcast in _project_output; no .expand() to avoid grad amplification
+        return _ssm_scan(deltaA, deltaB_x, C)    # (batch, seq, 1)
 
     def _project_output(
         self, ssm_out: torch.Tensor, gated: torch.Tensor, convolved: torch.Tensor
