@@ -1,5 +1,6 @@
 # Approach2 Training Collapse Fixes — Implementation Plan
 
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Fix 6 bugs in `src/models/approach2/train.py` that cause all models to collapse to predicting all-negatives (F1=0.0000, Loss=0.0000) from epoch 1.

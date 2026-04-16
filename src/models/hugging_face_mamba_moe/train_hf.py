@@ -124,8 +124,13 @@ def _training_loop(
         history.append(row)
         logger.info("Epoch %d  train_loss=%.4f val_f1=%.4f val_auroc=%.4f",
                     epoch, train_m["loss"], val_m.get("f1", 0), val_m.get("auroc", float("nan")))
-        if val_m.get("f1", 0) > best_val_f1:
-            best_val_f1, best_epoch, no_improve = val_m["f1"], epoch, 0
+        train_loss_val = train_m.get("loss", float("nan"))
+        if not np.isfinite(train_loss_val):
+            logger.error("Non-finite train loss at epoch %d — aborting this model run.", epoch)
+            break
+        cur_f1 = val_m.get("f1", 0.0)
+        if cur_f1 > best_val_f1:
+            best_val_f1, best_epoch, no_improve = cur_f1, epoch, 0
             torch.save(model.state_dict(), ckpt_dir / "best_model.pt")
         else:
             no_improve += 1
@@ -200,11 +205,13 @@ def _compute_metrics(
     if y_true.size == 0:
         return {}
     if tune:
-        best_t, best_m = threshold, {}
+        # Start from the fixed-threshold metrics so we always have a populated dict,
+        # even when all tuned thresholds produce zero F1 (e.g., NaN logits).
+        best_m = _metrics_at_threshold(y_true, y_prob, threshold, smoothing_mode, smoothing_window, min_positive_run)
         for t in np.round(np.arange(0.05, 0.951, 0.05), 2):
             m = _metrics_at_threshold(y_true, y_prob, float(t), smoothing_mode, smoothing_window, min_positive_run)
             if m.get("f1", 0) > best_m.get("f1", 0):
-                best_t, best_m = float(t), m
+                best_m = m
         return best_m
     return _metrics_at_threshold(y_true, y_prob, threshold, smoothing_mode, smoothing_window, min_positive_run)
 

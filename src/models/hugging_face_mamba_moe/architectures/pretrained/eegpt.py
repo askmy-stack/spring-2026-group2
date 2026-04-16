@@ -45,8 +45,11 @@ class EEGPTPretrainedModel(nn.Module):
                 "EEGPT requires an updated braindecode[hug] + huggingface_hub. "
                 "Install: pip install --upgrade 'braindecode[hug]' huggingface_hub"
             ) from exc
+        # chs_info=None overrides the 64-ch montage baked into the pretrained config,
+        # letting us fine-tune on arbitrary in_channels (16 for CHB-MIT).
         self.model = EEGPT.from_pretrained(pretrained_repo, n_chans=in_channels,
-                                           n_outputs=num_classes, n_times=n_times, sfreq=sfreq)
+                                           n_outputs=num_classes, n_times=n_times,
+                                           sfreq=sfreq, chs_info=None)
         if freeze_backbone:
             _freeze_backbone(self.model)
 

@@ -52,7 +52,13 @@ class BENDRPretrainedModel(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Args: x (batch, C, T). Returns: logits (batch, num_classes)."""
-        return self.model(ensure_3d(x))
+        x = ensure_3d(x)
+        # Per-channel z-score normalization — BENDR pretrained weights expect
+        # standardized inputs; raw amplitudes cause activations to explode to NaN.
+        mean = x.mean(dim=-1, keepdim=True)
+        std = x.std(dim=-1, keepdim=True).clamp(min=1e-6)
+        x = (x - mean) / std
+        return self.model(x)
 
 
 def _freeze_backbone(model: nn.Module) -> None:
