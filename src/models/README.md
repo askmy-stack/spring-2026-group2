@@ -1,211 +1,134 @@
-# EEG Seizure Detection — Models
+# EEG Seizure Detection — Model Directory
 
-All models are run from the **project root** using `python -m src.models.*`.  
-Primary metric: **AUCPR** (Area Under Precision-Recall Curve) — correct for severe class imbalance (0.3% seizure rate).
+Four model directories for CHB-MIT EEG seizure prediction, with shared utilities.
 
----
-
-## Results Summary
-
-| Model | Test AUCPR | Test ROC-AUC | Test F1 |
-|-------|-----------|-------------|---------|
-| Random Forest (Optuna) | **0.357** | 0.882 | 0.152 |
-| XGBoost (Optuna) | 0.251 | 0.927 | 0.192 |
-| LightGBM (Optuna) | 0.230 | **0.933** | 0.195 |
-| TabNet | 0.309 | 0.856 | **0.220** |
-
----
-
-## Folder Structure
+## Directory Structure
 
 ```
 src/models/
-├── baseline/
-│   ├── train_model.py          # LightGBM / XGBoost / RF — single training run
-│   └── train_tabnet.py         # TabNet baseline training
-├── improved/
-│   ├── optuna_lightgbm.py      # LightGBM with Optuna Bayesian tuning
-│   ├── optuna_xgboost.py       # XGBoost with Optuna Bayesian tuning
-│   └── optuna_random_forest.py # Random Forest with Optuna Bayesian tuning
-└── utils/
-    ├── config_utils.py         # YAML loader with portable path resolution
-    ├── data_utils.py           # load_split, validate_feature_columns
-    ├── metric_utils.py         # AUCPR, ROC-AUC, F1, threshold sweep
-    ├── io_utils.py             # ensure_dir, save_csv, save_json
-    ├── plot_utils.py           # PR curve, ROC curve, confusion matrix, feature importance
-    └── prepare_memmap.py       # Convert feature CSVs to memory-mapped arrays for TabNet
+├── config.yaml                      # Single source of truth for all hyperparameters
+├── utils/                           # Shared losses, metrics, callbacks, config validation
+│
+├── lstm_benchmark_models/           # Dir 1/4: Benchmark LSTM models (m1–m6)
+│   ├── architectures/               # M1 Vanilla, M2 BiLSTM, M3 CrissCross, M4 CNN-LSTM,
+│   │                                #   M5 FeatureBiLSTM, M6 Graph BiLSTM
+│   ├── modules/                     # Channel attention, criss-cross attention, graph attention
+│   └── train_baseline.py            # Training script for m1–m6
+│
+├── improved_lstm_models/            # Dir 2/4: Enhanced LSTM with augmentation
+│   ├── architectures/               # HierarchicalLSTM (two-level CNN + BiLSTM)
+│   ├── augmentation.py              # EEG augmentation (time shift, noise, channel dropout, etc.)
+│   ├── ensemble.py                  # Multi-model ensemble predictor
+│   └── train.py                     # Training with warmup cosine schedule + augmentation
+│
+├── ensemble_transformers/           # Dir 3/4: VQ-Transformer + 7-model ensemble
+│   ├── architectures/               # M7 VQ-Transformer
+│   ├── modules/                     # Vector quantizer with EMA codebook
+│   ├── ensemble.py                  # 7-model ensemble (m1–m6 + m7)
+│   └── train_ensemble.py            # Ensemble evaluation CLI
+│
+└── hugging_face_mamba_moe/          # Dir 4/4: Mamba SSM + MoE + HuggingFace CNNs
+    ├── architectures/               # EEGMamba, EEGMambaMoE, 8 HF CNN models,
+    │   │                            #   4 pretrained wrappers (BENDR, BIOT, EEGPT, ST-EEGFormer)
+    │   └── pretrained/              # HF Hub pretrained model wrappers with input validation
+    ├── modules/                     # Mamba SSM blocks, MoE routing, CNN building blocks
+    ├── train_mamba.py               # Mamba/MoE training with auxiliary load-balance loss
+    └── train_hf.py                  # Generic HuggingFace model training
 ```
-
----
 
 ## Prerequisites
 
-Feature CSVs must exist before running any model:
-
-```
-results/features_raw/
-├── features_train.csv
-├── features_val.csv
-└── features_test.csv
+```bash
+pip install torch numpy scikit-learn pyyaml mne
+# For HuggingFace pretrained models (optional):
+pip install braindecode huggingface_hub safetensors
 ```
 
-See `src/feature_engineering/README.md` for how to generate them.
+## Step 1: Prepare Data
 
----
-
-## Classical ML Models
-
-### Single training run (no Optuna)
+Convert raw CHB-MIT EDF files into tensor splits:
 
 ```bash
-# LightGBM
-python -m src.models.baseline.train_model \
-    --config src/config/baseline_lightgbm.yaml
-
-# XGBoost
-python -m src.models.baseline.train_model \
-    --config src/config/baseline_xgboost.yaml
-
-# Random Forest
-python -m src.models.baseline.train_model \
-    --config src/config/baseline_random_forest.yaml
+python src/prepare_tensors.py \
+    --raw_dir src/data/raw/chbmit \
+    --out_dir src/data/processed/chbmit
 ```
 
-### With Optuna hyperparameter tuning (recommended)
+This produces `train/`, `val/`, `test/` subdirectories, each containing:
+- `data.pt` — shape `(N, 16, 256)` float32 (16 channels × 256 timesteps at 256 Hz)
+- `labels.pt` — shape `(N,)` float32 (0=background, 1=seizure)
+
+## Step 2: Train Models
+
+All training scripts read hyperparameters from `src/models/config.yaml`.
+
+### Directory 1 — LSTM Benchmarks (m1–m6)
 
 ```bash
-# LightGBM — 50 Optuna trials, maximizes val AUCPR
-python -m src.models.improved.optuna_lightgbm \
-    --config src/config/baseline_lightgbm.yaml
+python -m src.models.lstm_benchmark_models.train_baseline \
+    --model m1_vanilla_lstm \
+    --data_path src/data/processed/chbmit
 
-# XGBoost
-python -m src.models.improved.optuna_xgboost \
-    --config src/config/baseline_xgboost.yaml
-
-# Random Forest
-python -m src.models.improved.optuna_random_forest \
-    --config src/config/baseline_random_forest.yaml
+# Available models: m1_vanilla_lstm, m2_bilstm, m3_criss_cross,
+#                   m4_cnn_lstm, m5_feature_bilstm, m6_graph_bilstm
 ```
 
-**What Optuna tunes:**
-
-| Model | Tuned Parameters |
-|-------|-----------------|
-| LightGBM | n_estimators, learning_rate, num_leaves, max_depth, min_child_samples, subsample, colsample_bytree, reg_alpha, reg_lambda |
-| XGBoost | n_estimators, learning_rate, max_depth, subsample, colsample_bytree, reg_alpha, reg_lambda, scale_pos_weight |
-| Random Forest | n_estimators, max_depth, min_samples_leaf, min_samples_split, max_features |
-
-**Outputs** (saved to `output_dir` from config):
-- `best_model.joblib` — trained model
-- `best_params.json` — winning hyperparameters
-- `metrics_val.json` / `metrics_test.json` — AUCPR, ROC-AUC, F1, precision, recall
-- `threshold_sweep.csv` — F1 at every threshold from 0.01 to 0.99
-- `pr_curve.png`, `roc_curve.png`, `confusion_matrix.png`, `feature_importance.png`
-
----
-
-## TabNet Models
-
-TabNet requires memory-mapped arrays instead of loading the full CSV into RAM.
-
-### Step 1 — Prepare memmap (run once per config)
+### Directory 2 — Improved LSTM (HierarchicalLSTM + Augmentation)
 
 ```bash
-python -m src.models.utils.prepare_memmap \
-    --config src/config/tabnet_baseline.yaml
+python -m src.models.improved_lstm_models.train \
+    --data_path src/data/processed/chbmit
 ```
 
-This creates:
-```
-results/modeling/tabnet/memmap/
-├── X_train.dat / y_train.dat / train_meta.json
-├── X_val.dat   / y_val.dat   / val_meta.json
-└── X_test.dat  / y_test.dat  / test_meta.json
-```
+### Directory 3 — Ensemble Evaluation (7-model)
 
-Use `--force` to overwrite existing memmap files.
-
-### Step 2 — Train TabNet
+Requires trained checkpoints from Dir 1 + Dir 3 in `outputs/models/`:
 
 ```bash
-python -m src.models.baseline.train_tabnet \
-    --config src/config/tabnet_baseline.yaml
+python -m src.models.ensemble_transformers.train_ensemble \
+    --data_path src/data/processed/chbmit \
+    --checkpoint_dir outputs/models
 ```
 
----
-
-## Utils
-
-### config_utils.py
-Loads YAML configs and resolves all relative paths from the config file's own directory — no hardcoded paths anywhere.
-
-```python
-from src.models.utils.config_utils import load_config
-cfg = load_config("src/config/baseline_lightgbm.yaml")
-```
-
-### data_utils.py
-```python
-from src.models.utils.data_utils import load_split, validate_feature_columns
-
-X_train, y_train, train_cols, meta = load_split(
-    csv_path, target_col="label", meta_cols=["path","start_sec","end_sec"]
-)
-validate_feature_columns(train_cols, val_cols, test_cols)
-```
-
-### metric_utils.py
-```python
-from src.models.utils.metric_utils import compute_binary_metrics, sweep_thresholds_for_f1
-
-metrics = compute_binary_metrics(y_true, y_prob, threshold=0.5)
-# Returns: aucpr, roc_auc, f1, precision, recall, confusion_matrix
-
-best_threshold, rows = sweep_thresholds_for_f1(y_true, y_prob)
-```
-
-### prepare_memmap.py
-```bash
-python -m src.models.utils.prepare_memmap \
-    --config src/config/tabnet_baseline.yaml \
-    --chunksize 50000   # rows per chunk (default: 50000)
-    --force             # overwrite existing files
-```
-
----
-
-## Config Files
-
-All configs live in `src/config/`. Key sections:
-
-```yaml
-model_type: lightgbm          # lightgbm | xgboost | random_forest | tabnet
-
-paths:
-  train_csv:  ../../results/features_raw/features_train.csv
-  val_csv:    ../../results/features_raw/features_val.csv
-  test_csv:   ../../results/features_raw/features_test.csv
-  output_dir: ../../results/modeling/lightgbm/optuna
-
-data:
-  meta_cols: [path, start_sec, end_sec]
-  dtype: float32
-
-target_col: label
-
-optuna:
-  n_trials: 50
-  direction: maximize       # maximize val AUCPR
-```
-
----
-
-## Running in Background (HPC / AWS)
+### Directory 4 — Mamba / Mamba-MoE
 
 ```bash
-nohup python -m src.models.improved.optuna_lightgbm \
-    --config src/config/baseline_lightgbm.yaml \
-    > results/logs/lgbm.log 2>&1 &
+python -m src.models.hugging_face_mamba_moe.train_mamba \
+    --model eeg_mamba \
+    --data_path src/data/processed/chbmit
 
-tail -f results/logs/lgbm.log
+# Or with Mixture of Experts:
+python -m src.models.hugging_face_mamba_moe.train_mamba \
+    --model eeg_mamba_moe \
+    --data_path src/data/processed/chbmit
 ```
+
+### Directory 4 — HuggingFace CNN Models
+
+```bash
+python -m src.models.hugging_face_mamba_moe.train_hf \
+    --model baseline_cnn_1d \
+    --batch_size 32
+
+# Available: baseline_cnn_1d, enhanced_cnn_1d, eegnet_local, eegnet,
+#            deepconvnet, multiscale_cnn, multiscale_attention_cnn,
+#            st_eegformer, bendr_pretrained, biot_pretrained,
+#            eegpt_pretrained, hf_st_eegformer
+```
+
+## Configuration
+
+Edit `src/models/config.yaml` to change hyperparameters. Key sections:
+
+| Section | Controls |
+|---------|----------|
+| `data` | n_channels, time_steps, split ratios |
+| `training` | lr, batch_size, epochs, pos_weight, gradient_clip, label_smoothing |
+| `focal_loss` | gamma (2.0), reduction |
+| `models.*` | Per-directory model hyperparameters |
+| `outputs` | Checkpoint and results directories |
+
+## Outputs
+
+- **Checkpoints**: `outputs/models/{model_name}_best.pt`
+- **Metrics reported**: F1-score, AUC-ROC, Sensitivity (printed at end of training)
