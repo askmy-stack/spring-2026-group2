@@ -222,13 +222,25 @@ def main() -> None:
     """CLI entry point for training."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(description="Train LSTM benchmark models m1-m6")
-    parser.add_argument("--model", required=True, choices=list(MODEL_REGISTRY.keys()))
+    parser.add_argument("--model", required=True, choices=["all"] + list(MODEL_REGISTRY.keys()))
     parser.add_argument("--data_path", default="src/data/processed/chbmit")
     parser.add_argument("--config", default="src/models/config.yaml")
     args = parser.parse_args()
     config = load_config(Path(args.config))
-    results = train_baseline(args.model, Path(args.data_path), config)
-    logger.info("Test results: %s", results)
+    models_to_train = list(MODEL_REGISTRY.keys()) if args.model == "all" else [args.model]
+    all_results = {}
+    for model_name in models_to_train:
+        logger.info("=" * 60)
+        logger.info("Training model: %s", model_name)
+        logger.info("=" * 60)
+        results = train_baseline(model_name, Path(args.data_path), config)
+        all_results[model_name] = results
+        logger.info("Results for %s: %s", model_name, results)
+    if len(models_to_train) > 1:
+        logger.info("=" * 60)
+        logger.info("ALL RESULTS SUMMARY:")
+        for name, res in all_results.items():
+            logger.info("  %s: %s", name, res)
 
 
 if __name__ == "__main__":
