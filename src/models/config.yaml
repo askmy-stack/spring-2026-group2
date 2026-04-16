@@ -1,0 +1,65 @@
+# src/models/config.yaml
+# Single source of truth for all model hyperparameters.
+# All training scripts load this via load_config(). No hardcoded values elsewhere.
+
+data:
+  processed_dir: "src/results/tensors/chbmit"
+  n_channels: 16
+  time_steps: 256
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+
+training:
+  learning_rate: 0.0005
+  batch_size: 32
+  num_epochs: 100
+  pos_weight: 3.0
+  early_stopping_patience: 15
+  gradient_clip: 1.0
+  warmup_epochs: 5
+  weight_decay: 0.01
+  label_smoothing: 0.1
+  aug_prob: 0.5
+
+focal_loss:
+  gamma: 2.0
+  reduction: "mean"
+
+models:
+  lstm_benchmark:
+    hidden_size: 128
+    num_layers: 2
+    num_heads: 4
+    dropout: 0.3
+
+  improved_lstm:
+    hidden_size: 256
+    num_layers: 3
+    n_windows: 1
+    dropout: 0.4
+
+  ensemble_transformers:
+    patch_size: 32
+    hidden_size: 128
+    codebook_size: 512
+    num_layers: 4
+    num_heads: 4
+    dropout: 0.1
+    ensemble_strategy: "weighted"
+
+  hugging_face_mamba_moe:
+    d_model: 128
+    d_state: 16
+    d_conv: 4
+    n_layers: 4
+    num_experts: 8
+    top_k: 2
+    dropout: 0.1
+    bidirectional: true
+    moe_loss_weight: 0.01
+
+outputs:
+  checkpoint_dir: "outputs/models"
+  results_dir: "outputs/results"
+  log_dir: "outputs/logs"
