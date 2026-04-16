@@ -8,8 +8,6 @@ References:
     EEGMamba: Bidirectional State Space Model for EEG Decoding
 """
 import logging
-from typing import List
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -81,19 +79,25 @@ class SelectiveSSM(nn.Module):
         return convolved, gated
 
     def _apply_ssm(self, convolved: torch.Tensor, batch: int, seq_len: int) -> torch.Tensor:
-        """Run selective scan recurrence over time steps."""
+        """Run selective scan via vectorized parallel prefix sum (no Python loop)."""
         x_dbl = self.x_proj(convolved)
         delta, B, C = torch.split(x_dbl, [1, self.d_state, self.d_state], dim=-1)
-        delta = F.softplus(delta)
-        A = -torch.exp(self.A_log)
-        deltaA = torch.exp(delta * A)
-        deltaB = delta * B
-        hidden_state = torch.zeros(batch, self.d_state, device=convolved.device)
-        outputs: List[torch.Tensor] = []
-        for t in range(seq_len):
-            hidden_state = deltaA[:, t] * hidden_state + deltaB[:, t] * convolved[:, t, :self.d_state]
-            outputs.append((hidden_state * C[:, t]).sum(dim=-1, keepdim=True))
-        return torch.stack(outputs, dim=1).expand(-1, -1, self.d_inner)
+        delta = F.softplus(delta)                       # (batch, seq, 1)
+        A = -torch.exp(self.A_log)                      # (d_state,)
+        deltaA = torch.exp(delta * A)                   # (batch, seq, d_state)
+        deltaB_x = delta * B * convolved[:, :, :self.d_state]  # (batch, seq, d_state)
+
+        # Vectorized scan: h[t] = deltaA[t]*h[t-1] + deltaB_x[t]
+        # Use log-space cumsum for the multiplicative coefficients
+        log_dA = torch.log(deltaA.clamp(min=1e-6))     # (batch, seq, d_state)
+        log_dA_cumsum = torch.cumsum(log_dA, dim=1)     # cumulative product in log-space
+        # Scale input by inverse cumulative product, cumsum, then rescale
+        scaled_input = deltaB_x * torch.exp(-log_dA_cumsum)
+        hidden_states = torch.cumsum(scaled_input, dim=1) * torch.exp(log_dA_cumsum)
+        # (batch, seq, d_state)
+
+        outputs = (hidden_states * C).sum(dim=-1, keepdim=True)  # (batch, seq, 1)
+        return outputs.expand(-1, -1, self.d_inner)
 
     def _project_output(
         self, ssm_out: torch.Tensor, gated: torch.Tensor, convolved: torch.Tensor
