@@ -1,8 +1,8 @@
 dataset:
-  raw_root: "../../data/raw_data"
-  results_root: "../../results"
-  bids_root: "../../results/bids_dataset"
-  sample_data_dir: "../../data/raw_data"
+  raw_root: "src/data/raw"
+  results_root: "src/results"
+  bids_root: "src/results/bids_dataset"
+  sample_data_dir: "src/data/raw"
 
 signal:
   target_sfreq: 256
@@ -68,7 +68,7 @@ stratification:
 caching:
   enable: true
   max_memory_mb: 4096
-  disk_cache_dir: "../../results/cache"
+  disk_cache_dir: "src/results/cache"
   use_dask: true
 
 metadata:
@@ -136,8 +136,8 @@ export:
   save_metadata_json: true
   generate_summary: true
   save_indices: true
-  metadata_dir: "../../results/dataloader/metadata"
-  reports_dir: "../../results/reports"
+  metadata_dir: "src/results/dataloader/metadata"
+  reports_dir: "src/results/reports"
 
 validation:
   verify_on_load: false
