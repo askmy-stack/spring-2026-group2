@@ -63,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min_positive_run", type=int, default=2)
     parser.add_argument("--grad_clip_norm", type=float, default=0.0)
     parser.add_argument("--config_path", default="src/data_loader/config.yaml")
+    parser.add_argument("--data_path", default="", help="Path to pre-processed tensors (train/val/test with data.pt & labels.pt). If set, bypasses cache loader.")
     return parser.parse_args()
 
 
@@ -235,18 +236,41 @@ def _consecutive_smooth(y_pred: np.ndarray, min_run: int) -> np.ndarray:
 
 
 def _load_data(args: argparse.Namespace, config_path: Path):
-    """Load cached dataloaders; return (train, val, test, channels, samples, sfreq)."""
-    from src.data_loader.load_cache import get_dataloaders
+    """Load dataloaders; return (train, val, test, channels, samples, sfreq)."""
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
     channels = int(cfg.get("channels", {}).get("target_count", 16))
     sfreq = int(cfg.get("signal", {}).get("target_sfreq", 256))
     samples = int(cfg.get("windowing", {}).get("window_sec", 1.0) * sfreq)
-    train_dl, val_dl, test_dl = get_dataloaders(
-        batch_size=args.batch_size, num_workers=args.num_workers,
-        augment_train=args.train_augment,
-    )
+
+    if args.data_path:
+        train_dl, val_dl, test_dl = _load_from_tensors(
+            Path(args.data_path), args.batch_size,
+        )
+    else:
+        from src.data_loader.load_cache import get_dataloaders
+        train_dl, val_dl, test_dl = get_dataloaders(
+            batch_size=args.batch_size, num_workers=args.num_workers,
+            augment_train=args.train_augment,
+        )
     return train_dl, val_dl, test_dl, channels, samples, sfreq
+
+
+def _load_from_tensors(data_path: Path, batch_size: int):
+    """Load pre-processed .pt tensor splits — same format as benchmark models."""
+    from torch.utils.data import DataLoader, TensorDataset
+    pin = torch.cuda.is_available()
+
+    def _split(name: str):
+        d = torch.load(data_path / name / "data.pt", weights_only=True).float()
+        l = torch.load(data_path / name / "labels.pt", weights_only=True).long().squeeze()
+        return TensorDataset(d, l)
+
+    return (
+        DataLoader(_split("train"), batch_size=batch_size, shuffle=True, pin_memory=pin),
+        DataLoader(_split("val"), batch_size=batch_size, shuffle=False, pin_memory=pin),
+        DataLoader(_split("test"), batch_size=batch_size, shuffle=False, pin_memory=pin),
+    )
 
 
 def _build_model(args: argparse.Namespace, channels: int, samples: int, sfreq: int,
