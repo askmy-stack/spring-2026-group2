@@ -2,7 +2,7 @@
 <project version="4">
   <component name="SshConfigs">
     <configs>
-      <sshConfig host="13.217.199.123" id="f737f24b-0ce6-455e-8f40-e86dcd705353" keyPath="$USER_HOME$/Downloads/Abhinaysai.pem" port="22" customName="AWS" nameFormat="CUSTOM" username="ubuntu" useOpenSSHConfig="true">
+      <sshConfig host="18.213.2.112" id="f737f24b-0ce6-455e-8f40-e86dcd705353" keyPath="$USER_HOME$/Downloads/Abhinaysai.pem" port="22" customName="AWS" nameFormat="CUSTOM" username="ubuntu" useOpenSSHConfig="true">
         <option name="customName" value="AWS" />
       </sshConfig>
     </configs>
