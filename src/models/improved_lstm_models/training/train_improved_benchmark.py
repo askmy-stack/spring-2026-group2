@@ -85,7 +85,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = _parse_args()
-    config = load_config(args.config)
+    config = load_config(Path(args.config))
     selected = _expand_model_arg(args.model)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("Training on device=%s; models=%s", device, selected)
