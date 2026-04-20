@@ -1,2 +1,39 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+.vscode/
+*.swp
+*~
+
+# Trained models & large artefacts — never push weights
+outputs/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Processed data (regenerate from raw)
+src/data/processed/
+src/results/
+
+# Logs
+*.log
+logs/
+
+# Caching
+*.npz
+*.npy
+.cache/
