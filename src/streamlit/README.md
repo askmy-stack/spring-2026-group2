@@ -1,26 +1,90 @@
-# Streamlit EEG Demo
+# Streamlit App
 
-This directory contains the Streamlit app shell for interactive EEG upload and input validation.
+This directory contains the interactive EEG seizure detection app.
 
-Run it from the project root:
+Current app features:
+
+- local EDF upload
+- server-side EDF selection from `~/EEG_SEIZURE_DETECTION/uploads`
+- CNN inference with:
+  - `enhanced_cnn_1d`
+  - `multiscale_attention_cnn`
+- engineered-feature inference with:
+  - `tabnet_features`
+- optional visual diagnostics:
+  - trace view
+  - band-power view
+  - spectrogram
+  - channel correlation
+
+## Main File
+
+- [app.py](./app.py)
+
+## Run Locally
+
+From project root:
+
+```bash
+source .venv/bin/activate
+streamlit run src/streamlit/app.py --server.address 127.0.0.1 --server.port 8502
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8502
+```
+
+Do not run the app with `PYTHONPATH=src` unless you have verified there is no namespace conflict in your environment.
+
+## Run On Ubuntu / Remote Server
+
+On the server:
 
 ```bash
 cd ~/EEG_SEIZURE_DETECTION
 source .venv/bin/activate
-streamlit run src/streamlit/app.py
+streamlit run src/streamlit/app.py --server.address 127.0.0.1 --server.port 8502
 ```
 
-Current scope:
+On your local machine:
 
-- upload one EEG window
-- validate shape against a selected model profile
-- adapt channels and sample length with pad/trim
-- preview the signal
-- inspect saved artifacts under `outputs/models`, `outputs/results`, and `outputs/logs`
-- verify that the shared dataloader indices are available
+```bash
+ssh -i ~/.ssh/capstone_ritu.pem -L 8502:127.0.0.1:8502 ubuntu@YOUR-EC2-HOST
+```
 
-Not wired yet:
+Then open locally:
 
-- checkpoint loading
-- model inference
-- EDF parsing
+```text
+http://127.0.0.1:8502
+```
+
+## Server File Mode
+
+If you want to avoid repeated browser uploads for large EDFs:
+
+1. copy EDF files to the server:
+
+```bash
+mkdir -p ~/EEG_SEIZURE_DETECTION/uploads
+```
+
+2. place `.edf` files in that directory
+3. in the app, select:
+   - `Use server file`
+
+The app will read directly from the Ubuntu filesystem instead of uploading through the browser tunnel.
+
+## Dependencies
+
+The app relies on:
+
+- `streamlit`
+- `mne`
+- `torch`
+- `pytorch-tabnet` for TabNet inference
+- `PyWavelets`
+- `numba`
+
+If TabNet dependencies are missing, the CNN paths can still run, but the TabNet model will fail when selected.
