@@ -60,14 +60,20 @@ pip install 'braindecode[hug]' huggingface_hub safetensors
 
 ### 1. Prepare Data
 
-Convert raw CHB-MIT EDF files to tensor splits with the shared preprocessing
-pipeline (`src/data_loader/core/signal.py`: resample → bandpass → notch → avg-reference):
+Convert raw CHB-MIT EDF files to tensor splits. Windows at 256 Hz into 1-sec
+windows (16 channels × 256 timesteps), applies z-score normalisation, and
+splits 70/15/15 by subject:
 
 ```bash
-python -m src.data_loader.precache \
+python src/prepare_tensors.py \
     --raw_dir src/data/raw/chbmit \
     --out_dir src/data/processed/chbmit
 ```
+
+> Note: `src/data_loader/precache.py` is a **different** tool — it builds the
+> on-disk pickle cache consumed by `CachedEEGLoader`. The canonical training
+> scripts here read the `data.pt` / `labels.pt` layout produced by
+> `prepare_tensors.py`, not the pickle cache.
 
 Output layout:
 
