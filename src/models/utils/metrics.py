@@ -105,31 +105,33 @@ def compute_specificity(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return float(true_negatives / denominator)
 
 
-def find_optimal_threshold(y_true: np.ndarray, y_score: np.ndarray) -> float:
+def find_optimal_threshold(
+    y_true: np.ndarray, y_score: np.ndarray, objective: str = "f1",
+) -> float:
     """
-    Find classification threshold maximising Youden's J (sensitivity + specificity - 1).
+    Find classification threshold maximising the given objective on the provided split.
 
     Args:
-        y_true: Ground-truth binary labels, shape (n,)
-        y_score: Predicted probabilities, shape (n,)
+        y_true:    Ground-truth binary labels, shape (n,)
+        y_score:   Predicted probabilities,    shape (n,)
+        objective: 'f1' (default) or 'youden'. F1 is more robust than
+                   Youden's J when the val → test distribution shifts, which
+                   is typical in subject-independent EEG splits.
 
     Returns:
         Optimal threshold in [0.01, 0.99].
-
-    Example:
-        >>> find_optimal_threshold(np.array([0,1,1,0]), np.array([0.1,0.9,0.8,0.2]))
-        0.15
     """
     if len(np.unique(y_true)) < 2:
         return 0.5
-    best_j = -1.0
+    best_score = -1.0
     best_thresh = 0.5
     for thresh in np.arange(0.01, 1.00, 0.01):
         y_pred = (y_score >= thresh).astype(int)
-        sensitivity = compute_sensitivity(y_true, y_pred)
-        specificity = compute_specificity(y_true, y_pred)
-        j_stat = sensitivity + specificity - 1.0
-        if j_stat > best_j:
-            best_j = j_stat
+        if objective == "youden":
+            score = compute_sensitivity(y_true, y_pred) + compute_specificity(y_true, y_pred) - 1.0
+        else:  # 'f1'
+            score = compute_f1_score(y_true, y_pred)
+        if score > best_score:
+            best_score = score
             best_thresh = float(thresh)
     return best_thresh
