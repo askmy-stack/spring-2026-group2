@@ -17,3 +17,5 @@ uploads/
 *.pt
 *.pth
 *.ckpt
+Code Review Guidelines.pdf
+wget-log
