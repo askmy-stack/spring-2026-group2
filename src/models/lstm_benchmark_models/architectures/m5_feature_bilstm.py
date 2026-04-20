@@ -67,15 +67,41 @@ class M5_FeatureBiLSTM(nn.Module):
     def forward(self, eeg_input: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            eeg_input: Either (batch, seq_len, n_features) or (batch, n_channels, time_steps).
+            eeg_input: Either raw EEG ``(batch, n_channels, time_steps)`` or
+                pre-extracted features ``(batch, seq_len, n_features)``.
 
         Returns:
             Logits, shape (batch, 1).
+
+        Raises:
+            ValueError: If the last two dims match neither ``(n_channels, time_steps)``
+                nor ``(seq_len, n_features)`` exactly.
         """
-        is_raw_eeg = eeg_input.size(1) == self.n_channels and eeg_input.size(2) == self.time_steps
-        if is_raw_eeg:
+        if eeg_input.ndim != 3:
+            raise ValueError(
+                f"M5_FeatureBiLSTM expects a 3-D tensor; got shape {tuple(eeg_input.shape)}."
+            )
+        _, dim1, dim2 = eeg_input.shape
+        is_raw = (dim1 == self.n_channels and dim2 == self.time_steps)
+        is_feat = (dim1 == self.seq_len and dim2 == self.n_features)
+        if is_raw and is_feat:
+            # Defensive: if both interpretations are numerically valid (e.g. the
+            # user happened to configure n_channels=seq_len AND time_steps=n_features),
+            # prefer raw since that's the canonical CHB-MIT pipeline.
+            logger.warning(
+                "Input shape %s matches both raw and feature modes; defaulting to raw.",
+                tuple(eeg_input.shape),
+            )
             return self._forward_raw(eeg_input)
-        return self._forward_features(eeg_input)
+        if is_raw:
+            return self._forward_raw(eeg_input)
+        if is_feat:
+            return self._forward_features(eeg_input)
+        raise ValueError(
+            f"M5_FeatureBiLSTM got shape {tuple(eeg_input.shape)} which matches "
+            f"neither raw (_, {self.n_channels}, {self.time_steps}) nor "
+            f"feature (_, {self.seq_len}, {self.n_features}) mode."
+        )
 
     def _forward_features(self, eeg_input: torch.Tensor) -> torch.Tensor:
         """Pipeline for pre-extracted features (batch, seq_len, n_features)."""

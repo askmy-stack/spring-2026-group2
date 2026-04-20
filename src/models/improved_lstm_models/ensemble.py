@@ -5,9 +5,23 @@ Combines multiple model predictions via averaging, weighted averaging,
 voting, max probability, or stacking.
 
 Import from here — never define ensemble logic inline in a training script.
+
+CLI usage (auto-discovers every unified-schema .pt in the checkpoint dir):
+
+    python -m src.models.improved_lstm_models.ensemble \\
+        --data_path src/data/processed/chbmit \\
+        --ckpt_dir src/models/improved_lstm_models/checkpoints
+
+Reports F1 / AUROC / sens / spec for both ``average`` and ``weighted`` voting
+strategies with threshold tuned on the validation split.
 """
+from __future__ import annotations
+
+import argparse
+import json
 import logging
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -154,3 +168,189 @@ def _build_meta_learner(n_models: int) -> nn.Sequential:
         nn.Dropout(0.2),
         nn.Linear(16, 1),
     )
+
+
+# ---------------------------------------------------------------------------
+# CLI: discover checkpoints → per-model inference → ensemble evaluation
+# ---------------------------------------------------------------------------
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Ensemble over all improved-LSTM checkpoints.")
+    parser.add_argument("--data_path", required=True,
+                        help="Tensor splits directory (train/val/test/{data,labels}.pt).")
+    parser.add_argument("--ckpt_dir", default="src/models/improved_lstm_models/checkpoints",
+                        help="Directory holding one or more unified-schema .pt files.")
+    parser.add_argument("--batch_size", type=int, default=64)
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--out_dir", default="src/models/improved_lstm_models/checkpoints/ensemble",
+                        help="Where to write ensemble_meta.pt and ensemble_metrics.json.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    """CLI entry point — ensemble every .pt checkpoint in ``--ckpt_dir``."""
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    args = _parse_args()
+    device = torch.device(args.device if args.device != "cpu" and torch.cuda.is_available() else "cpu")
+
+    ckpts = _discover_checkpoints(Path(args.ckpt_dir))
+    if not ckpts:
+        logger.error("No unified-schema .pt checkpoints found in %s", args.ckpt_dir)
+        return
+    logger.info("Found %d checkpoints: %s", len(ckpts), [p.name for p in ckpts])
+
+    models, weights, thresholds = _load_members(ckpts, device)
+    if not models:
+        logger.error("Could not rebuild any member model; aborting.")
+        return
+
+    val_dl, test_dl = _build_dataloaders(Path(args.data_path), args.batch_size)
+    val_true = _collect_labels(val_dl)
+    test_true = _collect_labels(test_dl)
+
+    val_probs_per_model = [_predict(m, val_dl, device) for m in models]
+    test_probs_per_model = [_predict(m, test_dl, device) for m in models]
+
+    results: Dict[str, Dict[str, float]] = {}
+    for strategy in ("mean", "weighted"):
+        w = np.asarray(weights) if strategy == "weighted" else None
+        val_ens = _combine(val_probs_per_model, w)
+        test_ens = _combine(test_probs_per_model, w)
+        best_t = _tune_threshold(val_true, val_ens)
+        results[strategy] = _metrics(test_true, test_ens, best_t)
+        logger.info("[%s] threshold=%.2f  F1=%.4f  AUROC=%.4f  sens=%.4f  spec=%.4f",
+                    strategy, best_t, results[strategy]["f1"], results[strategy]["auroc"],
+                    results[strategy]["sens"], results[strategy]["spec"])
+        results[strategy]["threshold"] = best_t
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(
+        {
+            "member_paths": [str(p) for p in ckpts],
+            "member_weights": [float(w) for w in weights],
+            "member_thresholds": [float(t) for t in thresholds],
+            "results": results,
+        },
+        out_dir / "ensemble_meta.pt",
+    )
+    with open(out_dir / "ensemble_metrics.json", "w") as fh:
+        json.dump({"members": [p.name for p in ckpts], "results": results}, fh, indent=2)
+    logger.info("Wrote ensemble meta -> %s", out_dir)
+
+
+def _discover_checkpoints(ckpt_dir: Path) -> List[Path]:
+    """Return sorted list of unified-schema .pt files in ``ckpt_dir``."""
+    if not ckpt_dir.exists():
+        return []
+    return sorted(p for p in ckpt_dir.glob("*.pt") if p.is_file())
+
+
+def _load_members(
+    ckpts: List[Path], device: torch.device,
+) -> Tuple[List[nn.Module], List[float], List[float]]:
+    """Rebuild each checkpoint's model; return (models, weights, thresholds)."""
+    from src.models.utils.checkpoint import load_checkpoint  # local to avoid cycles
+    models, weights, thresholds = [], [], []
+    for path in ckpts:
+        try:
+            model, payload = load_checkpoint(path, map_location=device, build_model=True)
+        except Exception as exc:
+            logger.warning("Skip %s: %s", path.name, exc)
+            continue
+        if model is None:
+            logger.warning("Skip %s: auto-rebuild failed (missing model_class/config).", path.name)
+            continue
+        model = model.to(device).eval()
+        val_f1 = float(payload.get("val_metrics", {}).get("f1", 0.0))
+        threshold = float(payload.get("optimal_threshold", 0.5))
+        models.append(model)
+        weights.append(max(val_f1, 1e-3))  # weight proportional to val F1
+        thresholds.append(threshold)
+        logger.info("Loaded %s (val_f1=%.4f, threshold=%.3f)", path.name, val_f1, threshold)
+    if weights:
+        total = sum(weights)
+        weights = [w / total for w in weights]
+    return models, weights, thresholds
+
+
+def _build_dataloaders(data_path: Path, batch_size: int):
+    """Load val and test tensors; return (val_loader, test_loader)."""
+    from torch.utils.data import DataLoader, TensorDataset
+    pin = torch.cuda.is_available()
+
+    def _split(name: str) -> TensorDataset:
+        data = torch.load(data_path / name / "data.pt", weights_only=True).float()
+        labels = torch.load(data_path / name / "labels.pt", weights_only=True).long().squeeze()
+        return TensorDataset(data, labels)
+
+    return (
+        DataLoader(_split("val"), batch_size=batch_size, shuffle=False, pin_memory=pin),
+        DataLoader(_split("test"), batch_size=batch_size, shuffle=False, pin_memory=pin),
+    )
+
+
+def _predict(model: nn.Module, loader, device: torch.device) -> np.ndarray:
+    """Run model on loader; return 1-D array of positive-class probabilities."""
+    probs = []
+    model.eval()
+    with torch.no_grad():
+        for x, _ in loader:
+            x = x.to(device, non_blocking=True).unsqueeze(1)  # HierarchicalLSTM wants 4-D
+            logits = model(x).squeeze(-1).squeeze()
+            p = torch.sigmoid(logits).cpu().numpy()
+            probs.append(np.atleast_1d(p))
+    return np.concatenate(probs)
+
+
+def _collect_labels(loader) -> np.ndarray:
+    """Concatenate labels across a loader."""
+    out = []
+    for _, y in loader:
+        out.append(y.numpy())
+    return np.concatenate(out)
+
+
+def _combine(probs_list: List[np.ndarray], weights: Optional[np.ndarray]) -> np.ndarray:
+    """Combine per-model probability arrays via mean or weighted-average."""
+    stack = np.stack(probs_list)  # (n_models, n_samples)
+    if weights is None:
+        return stack.mean(axis=0)
+    w = weights / weights.sum()
+    return np.average(stack, axis=0, weights=w)
+
+
+def _tune_threshold(y_true: np.ndarray, y_prob: np.ndarray) -> float:
+    """Return threshold in [0.05, 0.95] that maximises F1 on given data."""
+    from sklearn.metrics import f1_score
+    best_t, best_f1 = 0.5, -1.0
+    for t in np.arange(0.05, 0.951, 0.05):
+        pred = (y_prob >= t).astype(int)
+        f1 = f1_score(y_true, pred, zero_division=0)
+        if f1 > best_f1:
+            best_t, best_f1 = float(t), float(f1)
+    return best_t
+
+
+def _metrics(y_true: np.ndarray, y_prob: np.ndarray, threshold: float) -> Dict[str, float]:
+    """Return F1/AUROC/sens/spec at the given threshold."""
+    from sklearn.metrics import f1_score, roc_auc_score, recall_score
+    y_pred = (y_prob >= threshold).astype(int)
+    tn = int(((y_pred == 0) & (y_true == 0)).sum())
+    fp = int(((y_pred == 1) & (y_true == 0)).sum())
+    try:
+        auroc = float(roc_auc_score(y_true, y_prob))
+    except Exception:
+        auroc = float("nan")
+    return {
+        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+        "auroc": auroc,
+        "sens": float(recall_score(y_true, y_pred, zero_division=0)),
+        "spec": float(tn / max(tn + fp, 1)),
+    }
+
+
+if __name__ == "__main__":
+    main()

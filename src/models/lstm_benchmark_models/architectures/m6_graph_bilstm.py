@@ -73,35 +73,44 @@ class M6_GraphBiLSTM(nn.Module):
             Logits, shape (batch, 1).
         """
         batch, n_channels, _ = eeg_input.shape
-        channel_features = self._extract_channel_features(eeg_input, n_channels)
-        graph_out = self._apply_graph_over_time(channel_features, batch)
+        channel_features = self._extract_channel_features_vectorised(eeg_input, batch, n_channels)
+        graph_out = self._apply_graph_over_time_vectorised(channel_features, batch, n_channels)
         lstm_out, _ = self.lstm(graph_out)
         attended = self._apply_self_attention(lstm_out)
         pooled = self._pool_and_norm(attended)
         return self.classifier(pooled)
 
-    def _extract_channel_features(self, eeg_input: torch.Tensor, n_channels: int) -> torch.Tensor:
-        """Apply per-channel temporal CNN; stack into (batch, n_channels, 64, time)."""
-        channel_feats = [
-            self.temporal_conv(eeg_input[:, c:c + 1, :])
-            for c in range(n_channels)
-        ]
-        return torch.stack(channel_feats, dim=1)
+    def _extract_channel_features_vectorised(
+        self, eeg_input: torch.Tensor, batch: int, n_channels: int
+    ) -> torch.Tensor:
+        """Apply per-channel temporal CNN in one pass by folding channels into the batch dim.
 
-    def _apply_graph_over_time(self, channel_features: torch.Tensor, batch: int) -> torch.Tensor:
-        """Run GAT at each time step; return (batch, time, n_channels * hidden)."""
-        conv_time_steps = channel_features.size(-1)
-        time_features = [
-            self._apply_graph_at_t(channel_features[:, :, :, t], batch)
-            for t in range(conv_time_steps)
-        ]
-        return torch.stack(time_features, dim=1)
+        Returns ``(batch, n_channels, 64, time_conv)`` — same layout as the old
+        loop-based implementation but with a single conv forward instead of
+        ``n_channels`` Python dispatches.
+        """
+        time_steps = eeg_input.size(-1)
+        cnn_in = eeg_input.reshape(batch * n_channels, 1, time_steps)
+        cnn_out = self.temporal_conv(cnn_in)              # (B*C, 64, T')
+        time_conv = cnn_out.size(-1)
+        return cnn_out.reshape(batch, n_channels, 64, time_conv)
 
-    def _apply_graph_at_t(self, node_features: torch.Tensor, batch: int) -> torch.Tensor:
-        """Apply all graph attention layers to features at one time step."""
+    def _apply_graph_over_time_vectorised(
+        self, channel_features: torch.Tensor, batch: int, n_channels: int
+    ) -> torch.Tensor:
+        """Run each GAT layer once over the folded ``(batch*time, n_channels, feat)`` tensor.
+
+        Returns ``(batch, time_conv, n_channels * hidden_size)`` for the LSTM.
+        """
+        time_conv = channel_features.size(-1)
+        # (B, C, 64, T') -> (B, T', C, 64) -> (B*T', C, 64)
+        node_features = (
+            channel_features.permute(0, 3, 1, 2).reshape(batch * time_conv, n_channels, 64)
+        )
         for graph_layer, graph_norm in zip(self.graph_layers, self.graph_norms):
             node_features = graph_norm(F.relu(graph_layer(node_features)))
-        return node_features.view(batch, -1)
+        # (B*T', C, hidden) -> (B, T', C*hidden)
+        return node_features.reshape(batch, time_conv, n_channels * self.hidden_size)
 
     def _apply_self_attention(self, lstm_out: torch.Tensor) -> torch.Tensor:
         """Residual multi-head self-attention on LSTM output."""

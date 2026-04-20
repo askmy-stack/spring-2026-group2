@@ -92,17 +92,29 @@ class HierarchicalLSTM(nn.Module):
     ):
         super().__init__()
         self.n_windows = n_windows
+        self.hidden_size = hidden_size
+        self.uses_context_lstm = n_windows > 1
         bilstm_out = hidden_size * 2
         self.window_encoder = WindowEncoder(n_channels, time_steps, hidden_size, dropout)
-        self.context_lstm = nn.LSTM(
-            hidden_size, hidden_size, num_layers,
-            batch_first=True, bidirectional=True,
-            dropout=dropout if num_layers > 1 else 0.0,
-        )
-        self.attention = _build_attention(bilstm_out)
-        self.pool_norm = nn.LayerNorm(bilstm_out)
+        if self.uses_context_lstm:
+            self.context_lstm = nn.LSTM(
+                hidden_size, hidden_size, num_layers,
+                batch_first=True, bidirectional=True,
+                dropout=dropout if num_layers > 1 else 0.0,
+            )
+            self.attention = _build_attention(bilstm_out)
+            self.pool_norm = nn.LayerNorm(bilstm_out)
+            classifier_in = bilstm_out
+        else:
+            # Single-window degenerate case: go straight from window embedding
+            # to the classifier — a 1-element LSTM sequence plus 1-element
+            # attention would be a no-op but still trainable, so we skip both.
+            self.context_lstm = None
+            self.attention = None
+            self.pool_norm = nn.LayerNorm(hidden_size)
+            classifier_in = hidden_size
         self.dropout_layer = nn.Dropout(dropout)
-        self.classifier = _build_classifier(hidden_size, bilstm_out, dropout)
+        self.classifier = _build_classifier(hidden_size, classifier_in, dropout)
 
     def forward(self, eeg_input: torch.Tensor) -> torch.Tensor:
         """
@@ -117,8 +129,11 @@ class HierarchicalLSTM(nn.Module):
                 f"HierarchicalLSTM expects (batch, n_windows, channels, time), "
                 f"got shape {tuple(eeg_input.shape)}. Unsqueeze dim=1 for single windows."
             )
-        batch, n_windows, n_channels, time_steps = eeg_input.shape
+        batch, n_windows, _, _ = eeg_input.shape
         window_embeddings = self._encode_windows(eeg_input, batch, n_windows)
+        if not self.uses_context_lstm:
+            pooled = window_embeddings.squeeze(1)  # (batch, hidden_size)
+            return self.classifier(self.dropout_layer(self.pool_norm(pooled)))
         context_out, _ = self.context_lstm(window_embeddings)
         pooled = self._attention_pool(context_out)
         return self.classifier(self.dropout_layer(self.pool_norm(pooled)))

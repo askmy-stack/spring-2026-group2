@@ -5,8 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .m1_vanilla_lstm import _build_lstm, _build_classifier
-
 logger = logging.getLogger(__name__)
 
 _CNN_OUT_FEATURES = 32 + 64 + 64
