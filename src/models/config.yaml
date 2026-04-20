@@ -35,13 +35,14 @@ models:
     dropout: 0.3
 
   improved_lstm:
-    hidden_size: 128
+    hidden_size: 96           # was 128 — reduce capacity to fight overfit
     num_layers: 2
     n_windows: 1
-    dropout: 0.3
+    dropout: 0.5              # was 0.3 — stronger regularisation
     learning_rate: 0.00005
     warmup_epochs: 10
-    early_stopping_patience: 20
+    early_stopping_patience: 10   # was 20 — stop before val loss diverges
+    weight_decay: 0.05        # per-model override; global remains 0.01
 
   ensemble_transformers:
     patch_size: 32
