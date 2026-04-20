@@ -2,7 +2,7 @@
 Run ALL models across all directories in one go.
 
 Usage:
-    python -m src.models.run_all_models --data_path src/results/tensors/chbmit
+    python -m src.models.run_all_models --data_path src/data/processed/chbmit
 """
 import argparse
 import logging
@@ -75,7 +75,7 @@ def main() -> None:
     """CLI entry point."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(description="Train ALL EEG seizure detection models")
-    parser.add_argument("--data_path", default="src/results/tensors/chbmit")
+    parser.add_argument("--data_path", default="src/data/processed/chbmit")
     parser.add_argument("--config", default="src/models/config.yaml")
     args = parser.parse_args()
     config = load_config(Path(args.config))

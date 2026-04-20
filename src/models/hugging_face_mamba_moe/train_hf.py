@@ -31,6 +31,7 @@ import yaml
 from torch import nn
 from torch.nn import functional as F
 
+from src.models.utils.checkpoint import save_checkpoint
 from .architectures.hf_factory import create_hf_model, list_hf_models
 
 logger = logging.getLogger(__name__)
@@ -145,7 +146,7 @@ def _run_test(
     model: nn.Module, test_dl, criterion: nn.Module, device: torch.device,
     threshold: float, args: argparse.Namespace, ckpt_dir: Path, logs_dir: Path,
 ) -> None:
-    """Load best checkpoint and evaluate on test set."""
+    """Load best checkpoint, evaluate, and rewrite it in the unified schema."""
     best_ckpt = ckpt_dir / "best_model.pt"
     if best_ckpt.exists():
         model.load_state_dict(torch.load(best_ckpt, map_location=device, weights_only=True))
@@ -155,6 +156,35 @@ def _run_test(
                         split_name="test")
     logger.info("Test results: %s", test_m)
     _save_json(logs_dir / "test_metrics.json", test_m)
+    # Rewrite best_model.pt with the unified checkpoint schema so downstream
+    # code (inference, ensembles, apps) can load it via utils.checkpoint.load_checkpoint.
+    # We record a ``model_builder`` pointing to create_hf_model so load_checkpoint
+    # rebuilds the HF model via the factory (class-based rebuild wouldn't work
+    # because most HF wrappers don't accept the factory's kwargs directly).
+    model_config = {
+        "name": args.model,
+        "in_channels": int(getattr(args, "channels", 16)),
+        "num_classes": int(args.num_classes),
+        "n_times": int(getattr(args, "samples", 256)),
+        "sfreq": int(getattr(args, "sfreq", 256)),
+        "dropout": float(args.dropout),
+        "freeze_backbone": bool(args.freeze_backbone),
+    }
+    val_metrics = {
+        "f1": float(test_m.get("f1", 0.0)),
+        "auroc": float(test_m.get("auroc", float("nan"))),
+        "sens": float(test_m.get("recall", 0.0)),
+        "spec": float(test_m.get("tn", 0) / max(test_m.get("tn", 0) + test_m.get("fp", 0), 1)),
+    }
+    save_checkpoint(
+        best_ckpt, model,
+        model_config=model_config,
+        model_builder="src.models.hugging_face_mamba_moe.architectures.hf_factory.create_hf_model",
+        optimizer=None,
+        epoch=int(args.epochs),
+        val_metrics=val_metrics,
+        optimal_threshold=float(threshold),
+    )
 
 
 def _run_epoch(
