@@ -274,19 +274,24 @@ def _build_model(model_name: str, cfg: Dict) -> nn.Module:
 
 
 def _model_kwargs(model_name: str, cfg: Dict) -> Dict:
-    """Kwargs passed to the im_i constructor (subset of cfg)."""
-    keep = (
-        "n_channels", "time_steps", "hidden_size", "num_layers", "dropout",
-        "stochastic_depth", "num_heads", "num_attn_blocks",
-    )
-    return {k: v for k, v in cfg.items() if k in keep}
+    """Kwargs passed to the im_i constructor (filtered to the class signature).
+
+    Each IM_i has a different constructor signature (e.g. im1/im2/im4 don't
+    take num_heads; only im7 takes num_attn_blocks). We introspect the target
+    class to keep only accepted kwargs, so the same cfg dict works for any
+    model without a hardcoded per-model whitelist.
+    """
+    import inspect
+    cls = IMPROVED_REGISTRY[model_name]
+    accepted = set(inspect.signature(cls.__init__).parameters.keys()) - {"self"}
+    return {k: v for k, v in cfg.items() if k in accepted}
 
 
 def _resolve_im_config(model_name: str, config: Dict) -> Dict:
     """Merge training defaults, improved_benchmark.common, and per-model overrides."""
     training = config["training"]
     focal = config.get("focal_loss", {})
-    im_root = config.get("improved_benchmark", {})
+    im_root = config.get("models", {}).get("improved_benchmark", {})
     common = im_root.get("common", {})
     per_model = im_root.get(model_name, {})
     data_cfg = config["data"]
