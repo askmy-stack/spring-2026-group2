@@ -7,6 +7,7 @@ bumps the backbone defaults.
 from src.models.lstm_benchmark_models.architectures.m5_feature_bilstm import (
     M5_FeatureBiLSTM,
 )
+from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM5_FeatureBiLSTM(M5_FeatureBiLSTM):
@@ -35,3 +36,4 @@ class IM5_FeatureBiLSTM(M5_FeatureBiLSTM):
             time_steps=time_steps,
         )
         self.stochastic_depth = stochastic_depth
+        wrap_with_droppath(self, attr_name="dropout_layer", p=stochastic_depth)

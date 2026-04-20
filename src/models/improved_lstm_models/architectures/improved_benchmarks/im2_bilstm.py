@@ -1,5 +1,6 @@
 """IM2: Improved BiLSTM — subclass of M2_BiLSTM."""
 from src.models.lstm_benchmark_models.architectures.m2_bilstm import M2_BiLSTM
+from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM2_BiLSTM(M2_BiLSTM):
@@ -22,3 +23,4 @@ class IM2_BiLSTM(M2_BiLSTM):
             dropout=dropout,
         )
         self.stochastic_depth = stochastic_depth
+        wrap_with_droppath(self, attr_name="dropout_layer", p=stochastic_depth)

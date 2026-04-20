@@ -2,6 +2,7 @@
 from src.models.lstm_benchmark_models.architectures.m6_graph_bilstm import (
     M6_GraphBiLSTM,
 )
+from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM6_GraphBiLSTM(M6_GraphBiLSTM):
@@ -30,3 +31,4 @@ class IM6_GraphBiLSTM(M6_GraphBiLSTM):
             dropout=dropout,
         )
         self.stochastic_depth = stochastic_depth
+        wrap_with_droppath(self, attr_name="dropout_layer", p=stochastic_depth)

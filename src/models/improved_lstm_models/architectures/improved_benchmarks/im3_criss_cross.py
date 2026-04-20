@@ -10,6 +10,7 @@ case in the parent, so no change needed here.
 from src.models.lstm_benchmark_models.architectures.m3_criss_cross import (
     M3_CrissCrossBiLSTM,
 )
+from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM3_CrissCrossBiLSTM(M3_CrissCrossBiLSTM):
@@ -34,3 +35,4 @@ class IM3_CrissCrossBiLSTM(M3_CrissCrossBiLSTM):
             dropout=dropout,
         )
         self.stochastic_depth = stochastic_depth
+        wrap_with_droppath(self, attr_name="dropout_layer", p=stochastic_depth)

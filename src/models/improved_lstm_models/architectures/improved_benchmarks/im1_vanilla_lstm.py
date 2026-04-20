@@ -7,6 +7,7 @@ residual paths.
 from src.models.lstm_benchmark_models.architectures.m1_vanilla_lstm import (
     M1_VanillaLSTM,
 )
+from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM1_VanillaLSTM(M1_VanillaLSTM):
@@ -29,3 +30,4 @@ class IM1_VanillaLSTM(M1_VanillaLSTM):
             dropout=dropout,
         )
         self.stochastic_depth = stochastic_depth
+        wrap_with_droppath(self, attr_name="dropout_layer", p=stochastic_depth)
