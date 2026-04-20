@@ -2,10 +2,10 @@
 CHB-MIT EEG Dataset — Exploratory Data Analysis
 =================================================
 Saves all figures and a summary CSV to:
-  /home/amir/Desktop/GWU/Research/EEG/results/EDA/
+  <project_root>/results/EDA/
 
-Run:
-  python3 src/EDA/eda_chbmit.py
+Run from project root:
+  python src/EDA/eda_chbmit.py
 """
 
 from __future__ import annotations
@@ -27,9 +27,11 @@ import mne
 warnings.filterwarnings("ignore")
 mne.set_log_level("ERROR")
 
-# ── Paths ──────────────────────────────────────────────────────────────────
-RAW_ROOT  = Path("/home/amir/Desktop/GWU/Research/EEG/data/raw_data/chbmit")
-OUT_ROOT  = Path("/home/amir/Desktop/GWU/Research/EEG/results/EDA")
+# ── Paths — derived from this file's location, no hardcoding ───────────────
+# File lives at: src/EDA/eda_chbmit.py  → parents[2] = project root
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+RAW_ROOT  = _PROJECT_ROOT / "data" / "raw_data" / "chbmit"
+OUT_ROOT  = _PROJECT_ROOT / "results" / "EDA"
 
 for d in ["overview", "raw_signals", "psd", "stats", "seizure_vs_bg", "correlation"]:
     (OUT_ROOT / d).mkdir(parents=True, exist_ok=True)
