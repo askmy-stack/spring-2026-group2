@@ -282,5 +282,83 @@ def _upload_to_hub(
     )
 
 
+# ---------------------------------------------------------------------------
+# Re-loading from the Hub
+# ---------------------------------------------------------------------------
+
+
+def rehydrate_from_hub(
+    repo_id: str,
+    subfolder: str,
+    *,
+    map_location: str = "cpu",
+    token: Optional[str] = None,
+):
+    """
+    Download ``model.safetensors`` + ``config.json`` from a HF repo and
+    reconstruct a loaded ``nn.Module`` plus the unified payload dict.
+
+    The caller gets exactly what :func:`load_checkpoint` would have
+    returned for a local unified-schema ``.pt`` — so downstream code
+    (ensemble, inference, eval scripts) needs no branching.
+
+    Args:
+        repo_id: ``<user-or-org>/<repo-name>`` on the Hugging Face Hub.
+        subfolder: Per-model directory inside the repo (e.g.
+            ``"im7_attention_lstm"``).
+        map_location: Device for tensor loading (default ``"cpu"``).
+        token: Optional HF access token override. When ``None``, uses
+            ``HF_TOKEN`` env or the CLI-cached token; both work for
+            public repos since no auth is required to download.
+
+    Returns:
+        Tuple ``(model, payload)`` — identical contract to
+        :func:`src.models.utils.checkpoint.load_checkpoint`.
+    """
+    from huggingface_hub import hf_hub_download     # local import: keep util optional
+    from safetensors.torch import load_file
+    from .checkpoint import load_checkpoint
+
+    token = token or os.environ.get("HF_TOKEN") or None
+    weights_path = hf_hub_download(
+        repo_id=repo_id, filename=f"{subfolder}/model.safetensors",
+        token=token,
+    )
+    config_path = hf_hub_download(
+        repo_id=repo_id, filename=f"{subfolder}/config.json",
+        token=token,
+    )
+    cfg = json.loads(Path(config_path).read_text())
+    state = load_file(weights_path, device=str(map_location))
+
+    # Rehydrate into the unified payload schema so load_checkpoint can
+    # delegate model reconstruction just as it does for local .pt files.
+    staged_ckpt = _stage_pt_from_hub(cfg, state)
+    return load_checkpoint(staged_ckpt, map_location=map_location, build_model=True)
+
+
+def _stage_pt_from_hub(cfg: Dict, state: Dict[str, torch.Tensor]) -> Path:
+    """Write a temporary unified-schema .pt file so load_checkpoint can read it."""
+    import tempfile
+
+    payload = {
+        "schema_version": cfg.get("schema_version", 1),
+        "model_class": cfg.get("model_class"),
+        "model_builder": cfg.get("model_builder"),
+        "model_config": cfg.get("model_config", {}),
+        "model_state_dict": state,
+        "optimizer_state_dict": None,
+        "epoch": int(cfg.get("epoch", 0)),
+        "val_metrics": {},
+        "optimal_threshold": float(cfg.get("optimal_threshold", 0.5)),
+        "input_spec": cfg.get("input_spec", {}),
+        "preprocess": cfg.get("preprocess", {}),
+        "git_commit": cfg.get("git_commit"),
+    }
+    tmp = Path(tempfile.mkstemp(suffix=".pt", prefix="hf_rehydrate_")[1])
+    torch.save(payload, tmp)
+    return tmp
+
+
 if __name__ == "__main__":
     main()
