@@ -119,8 +119,8 @@ def _compute_loss(
     """Compute main loss + optional MoE load-balance auxiliary loss."""
     if is_moe:
         logits, lb_loss = model(eeg_batch)
-        return criterion(logits.squeeze(), label_batch.float()) + moe_weight * lb_loss
-    return criterion(model(eeg_batch).squeeze(), label_batch.float())
+        return criterion(logits.squeeze(-1), label_batch.float()) + moe_weight * lb_loss
+    return criterion(model(eeg_batch).squeeze(-1), label_batch.float())
 
 
 def _validate_one_epoch(
@@ -137,7 +137,7 @@ def _validate_one_epoch(
                 logits, _ = model(eeg_batch)
             else:
                 logits = model(eeg_batch)
-            total_loss += criterion(logits.squeeze(), label_batch.float()).item()
+            total_loss += criterion(logits.squeeze(-1), label_batch.float()).item()
     return total_loss / max(len(val_loader), 1)
 
 
