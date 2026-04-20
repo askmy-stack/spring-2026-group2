@@ -15,7 +15,8 @@ src/models/
 │   ├── metrics.py                # F1 / AUROC / sens / spec / find_optimal_threshold
 │   ├── callbacks.py              # EarlyStopping, gradient clipping
 │   ├── config_validator.py       # Validates config.yaml shape
-│   └── checkpoint.py             # UNIFIED .pt schema — save/load_checkpoint
+│   ├── checkpoint.py             # UNIFIED .pt schema — save/load_checkpoint
+│   └── hf_publish.py             # publish to Hugging Face Hub; rehydrate_from_hub
 │
 ├── lstm_benchmark_models/        # Phase 1: m1–m6 LSTM/CNN baselines
 │   ├── architectures/            #   m1 Vanilla, m2 BiLSTM, m3 CrissCross,
@@ -23,11 +24,21 @@ src/models/
 │   ├── modules/                  #   attention blocks, graph attention
 │   └── train_baseline.py         #   → writes unified-schema .pt
 │
-├── improved_lstm_models/         # Phase 2: HierarchicalLSTM + augmentation
-│   ├── architectures/            #   two-level CNN + BiLSTM
-│   ├── augmentation.py           #   time shift, noise, channel dropout, mixup
-│   ├── train.py                  #   early-stops on val-F1 (not val-loss)
-│   └── ensemble.py               #   EnsemblePredictor class + CLI over .pt dir
+├── improved_lstm_models/         # Phase 2: HierarchicalLSTM + improved m1..m7 (im1..im7)
+│   ├── architectures/
+│   │   ├── hierarchical_lstm.py  #   two-level CNN + BiLSTM
+│   │   └── improved_benchmarks/  #   im1..im7 (subclass each m_i; wider defaults + DropPath)
+│   ├── modules/
+│   │   └── regularization.py     #   DropPath, SqueezeExcite1D, wrap_with_droppath
+│   ├── augmentation.py           #   time shift, noise, channel dropout, time mask
+│   ├── training/                 #   improved-benchmark training stack
+│   │   ├── mixup.py              #     MixUp + label-smoothed BCE
+│   │   ├── swa.py                #     Stochastic Weight Averaging hook
+│   │   ├── tta.py                #     Test-Time Augmentation (shift / flip)
+│   │   ├── kfold.py              #     subject-wise K-fold (stratified fallback)
+│   │   └── train_improved_benchmark.py   # im1..im7 driver (K-fold x seeds x SWA)
+│   ├── train.py                  #   HierarchicalLSTM trainer (val-F1 early stop)
+│   └── ensemble.py               #   EnsemblePredictor + shape-aware CLI (3-D / 4-D)
 │
 ├── hugging_face_mamba_moe/       # Phase 3: Mamba SSM, MoE, HF CNNs, pretrained wrappers
 │   ├── architectures/            #   EEGMamba, EEGMambaMoE, 8 HF CNNs,
@@ -174,6 +185,45 @@ threshold = payload["optimal_threshold"]
 If auto-rebuild fails (e.g., HF pretrained wrappers that require a factory), the
 caller can still access the raw `payload["model_state_dict"]` and build the
 model manually.
+
+## Improved Benchmarks (im1..im7) — Full Upgrade Stack
+
+Each `im_i` subclasses its `m_i` counterpart with wider defaults (`hidden_size 192`, `num_heads 8`) and a new `stochastic_depth` kwarg wired through DropPath. The trainer in `improved_lstm_models/training/train_improved_benchmark.py` runs **3 seeds × 3 subject-wise folds = 9 sub-runs per model**, applies EEG augmentation + MixUp + focal/label-smoothed BCE + AMP + warmup-cosine LR + SWA over the last 25 % of epochs + F1-based early stopping, and finalises with TTA at eval. Sub-runs land under `checkpoints/sub_runs/`; one aggregated unified-schema `.pt` per model lands at the top of `checkpoints/`.
+
+```bash
+# Train every improved benchmark
+python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+    --model all --data_path $DATA
+
+# Fast smoke run (1 seed × 2 folds × 3 epochs)
+python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+    --model im7_attention_lstm --data_path $DATA --dry_run
+```
+
+## Publishing to the Hugging Face Hub
+
+All unified-schema checkpoints (originals, improved, or the ensemble meta) can be published as a single public monorepo:
+
+```bash
+pip install 'huggingface_hub[cli]' safetensors
+huggingface-cli login           # or export HF_TOKEN=hf_...
+
+python -m src.models.utils.hf_publish \
+    --repo-id <your-user>/chbmit-seizure-models \
+    --ckpt-dirs src/models/improved_lstm_models/checkpoints \
+    --include 'im*_best.pt' 'improved_lstm_best.pt' \
+    --visibility public
+```
+
+Each model gets its own subfolder on the Hub containing `model.safetensors`, `config.json`, `metrics.json`, and an auto-generated `README.md` model card. To round-trip load any published model back into the project:
+
+```python
+from src.models.utils.hf_publish import rehydrate_from_hub
+model, payload = rehydrate_from_hub(
+    "<your-user>/chbmit-seizure-models",
+    subfolder="im7_attention_lstm",
+)
+```
 
 ## Configuration
 
