@@ -285,10 +285,13 @@ def _build_optimizer(model: nn.Module, config: Dict) -> torch.optim.AdamW:
     lr = config["models"]["improved_lstm"].get(
         "learning_rate", config["training"]["learning_rate"]
     )
+    weight_decay = config["models"]["improved_lstm"].get(
+        "weight_decay", config["training"]["weight_decay"]
+    )
     return torch.optim.AdamW(
         model.parameters(),
         lr=lr,
-        weight_decay=config["training"]["weight_decay"],
+        weight_decay=weight_decay,
     )
 
 
