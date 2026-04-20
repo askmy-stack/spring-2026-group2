@@ -1,5 +1,5 @@
 """
-LSTM Benchmark Model Architectures — m1 through m6.
+LSTM Benchmark Model Architectures — m1 through m7.
 
 Input contract for all models: (batch, n_channels, time_steps) -> logits (batch, 1).
 """
@@ -14,6 +14,7 @@ from .m3_criss_cross import M3_CrissCrossBiLSTM
 from .m4_cnn_lstm import M4_CNNLSTM
 from .m5_feature_bilstm import M5_FeatureBiLSTM
 from .m6_graph_bilstm import M6_GraphBiLSTM
+from .m7_attention_lstm import M7_AttentionLSTM
 
 MODEL_REGISTRY: Dict[str, Type[nn.Module]] = {
     "m1_vanilla_lstm": M1_VanillaLSTM,
@@ -22,11 +23,12 @@ MODEL_REGISTRY: Dict[str, Type[nn.Module]] = {
     "m4_cnn_lstm": M4_CNNLSTM,
     "m5_feature_bilstm": M5_FeatureBiLSTM,
     "m6_graph_bilstm": M6_GraphBiLSTM,
+    "m7_attention_lstm": M7_AttentionLSTM,
 }
 
 __all__ = [
     "M1_VanillaLSTM", "M2_BiLSTM", "M3_CrissCrossBiLSTM",
-    "M4_CNNLSTM", "M5_FeatureBiLSTM", "M6_GraphBiLSTM",
+    "M4_CNNLSTM", "M5_FeatureBiLSTM", "M6_GraphBiLSTM", "M7_AttentionLSTM",
     "MODEL_REGISTRY", "get_benchmark_model",
 ]
 
