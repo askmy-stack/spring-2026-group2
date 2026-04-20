@@ -6,14 +6,17 @@ voting, max probability, or stacking.
 
 Import from here — never define ensemble logic inline in a training script.
 
-CLI usage (auto-discovers every unified-schema .pt in the checkpoint dir):
+CLI usage (auto-discovers every unified-schema .pt in the given dirs;
+pass multiple ``--ckpt_dir`` to combine benchmark + improved checkpoints):
 
     python -m src.models.improved_lstm_models.ensemble \\
-        --data_path src/data/processed/chbmit \\
-        --ckpt_dir src/models/improved_lstm_models/checkpoints
+        --data_path src/results/tensors/chbmit \\
+        --ckpt_dir src/models/lstm_benchmark_models/checkpoints \\
+                    src/models/improved_lstm_models/checkpoints
 
 Reports F1 / AUROC / sens / spec for both ``average`` and ``weighted`` voting
-strategies with threshold tuned on the validation split.
+strategies with threshold tuned (for F1) on the validation split. Handles
+both 3-D (m1..m7 benchmarks) and 4-D (HierarchicalLSTM) input contracts.
 """
 from __future__ import annotations
 
@@ -179,8 +182,16 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Ensemble over all improved-LSTM checkpoints.")
     parser.add_argument("--data_path", required=True,
                         help="Tensor splits directory (train/val/test/{data,labels}.pt).")
-    parser.add_argument("--ckpt_dir", default="src/models/improved_lstm_models/checkpoints",
-                        help="Directory holding one or more unified-schema .pt files.")
+    parser.add_argument(
+        "--ckpt_dir",
+        nargs="+",
+        default=[
+            "src/models/lstm_benchmark_models/checkpoints",
+            "src/models/improved_lstm_models/checkpoints",
+        ],
+        help="One or more directories holding unified-schema .pt checkpoints. "
+             "Defaults cover both benchmark (m1..m7) and improved LSTM.",
+    )
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--out_dir", default="src/models/improved_lstm_models/checkpoints/ensemble",
@@ -195,9 +206,12 @@ def main() -> None:
     args = _parse_args()
     device = torch.device(args.device if args.device != "cpu" and torch.cuda.is_available() else "cpu")
 
-    ckpts = _discover_checkpoints(Path(args.ckpt_dir))
+    ckpt_dirs = [Path(d) for d in args.ckpt_dir]
+    ckpts: List[Path] = []
+    for d in ckpt_dirs:
+        ckpts.extend(_discover_checkpoints(d))
     if not ckpts:
-        logger.error("No unified-schema .pt checkpoints found in %s", args.ckpt_dir)
+        logger.error("No unified-schema .pt checkpoints found in %s", ckpt_dirs)
         return
     logger.info("Found %d checkpoints: %s", len(ckpts), [p.name for p in ckpts])
 
@@ -242,10 +256,17 @@ def main() -> None:
 
 
 def _discover_checkpoints(ckpt_dir: Path) -> List[Path]:
-    """Return sorted list of unified-schema .pt files in ``ckpt_dir``."""
+    """Return sorted list of unified-schema .pt files in ``ckpt_dir``.
+
+    Skips anything inside an ``ensemble/`` subdirectory so re-running the
+    ensemble doesn't pick up its own meta file as a member.
+    """
     if not ckpt_dir.exists():
         return []
-    return sorted(p for p in ckpt_dir.glob("*.pt") if p.is_file())
+    return sorted(
+        p for p in ckpt_dir.glob("*.pt")
+        if p.is_file() and p.parent.name != "ensemble"
+    )
 
 
 def _load_members(
@@ -293,12 +314,20 @@ def _build_dataloaders(data_path: Path, batch_size: int):
 
 
 def _predict(model: nn.Module, loader, device: torch.device) -> np.ndarray:
-    """Run model on loader; return 1-D array of positive-class probabilities."""
+    """Run model on loader; return 1-D array of positive-class probabilities.
+
+    Dispatches between 3-D and 4-D input contracts automatically: models with
+    an ``n_windows`` attribute (e.g. HierarchicalLSTM) receive 4-D tensors,
+    everything else (m1..m7 benchmarks) receives 3-D as-is.
+    """
+    needs_4d = hasattr(model, "n_windows")
     probs = []
     model.eval()
     with torch.no_grad():
         for x, _ in loader:
-            x = x.to(device, non_blocking=True).unsqueeze(1)  # HierarchicalLSTM wants 4-D
+            x = x.to(device, non_blocking=True)
+            if needs_4d and x.ndim == 3:
+                x = x.unsqueeze(1)  # (B, 1, C, T)
             logits = model(x).squeeze(-1).squeeze()
             p = torch.sigmoid(logits).cpu().numpy()
             probs.append(np.atleast_1d(p))
