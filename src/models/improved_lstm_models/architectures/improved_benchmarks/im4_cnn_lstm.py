@@ -1,5 +1,6 @@
 """IM4: Improved CNN-LSTM — subclass of M4_CNNLSTM."""
 from src.models.lstm_benchmark_models.architectures.m4_cnn_lstm import M4_CNNLSTM
+from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM4_CNNLSTM(M4_CNNLSTM):
@@ -22,3 +23,4 @@ class IM4_CNNLSTM(M4_CNNLSTM):
             dropout=dropout,
         )
         self.stochastic_depth = stochastic_depth
+        wrap_with_droppath(self, attr_name="dropout_layer", p=stochastic_depth)

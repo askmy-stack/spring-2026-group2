@@ -6,6 +6,7 @@ of 4. Commit 2 wires DropPath into the residual paths.
 from src.models.lstm_benchmark_models.architectures.m7_attention_lstm import (
     M7_AttentionLSTM,
 )
+from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM7_AttentionLSTM(M7_AttentionLSTM):
@@ -32,3 +33,4 @@ class IM7_AttentionLSTM(M7_AttentionLSTM):
             dropout=dropout,
         )
         self.stochastic_depth = stochastic_depth
+        wrap_with_droppath(self, attr_name="dropout_layer", p=stochastic_depth)
