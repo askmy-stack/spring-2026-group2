@@ -1,9 +1,9 @@
 """
-Prepare processed tensor splits for new model training scripts.
+Prepare processed tensor splits for model training scripts.
 
 Reads raw EDF files from src/data/raw/chbmit, windows them at 256 Hz into
 1-second windows (16 channels × 256 timesteps), applies z-score normalisation,
-labels seizure vs background, splits 70/15/15 by subject, and saves:
+labels seizure vs background, and writes subject-independent 70/15/15 splits:
 
     src/data/processed/chbmit/
         train/data.pt    (N_train, 16, 256)  float32
@@ -13,9 +13,27 @@ labels seizure vs background, splits 70/15/15 by subject, and saves:
         test/data.pt
         test/labels.pt
 
+Memory design:
+    * Subject→split mapping is decided up front (no EDFs loaded yet).
+    * Each subject's windows are processed and written directly to a per-subject
+      chunk file under the target split's ``_chunks/`` directory, then freed.
+    * At the end, each split's chunks are concatenated into one data.pt +
+      labels.pt pair and the chunks dir is deleted.
+    * Peak RAM ≈ largest single split after subsampling (not all data at once).
+
+Class balance:
+    * CHB-MIT is extremely imbalanced (~0.05% seizure windows). By default we
+      keep ``--background_ratio 10`` background windows per seizure window in
+      each EDF — reduces ~1.6M windows to ~50-100k and improves training
+      signal. Pass ``--background_ratio 0`` to disable subsampling (keep all
+      background — WILL OOM on most machines).
+
 Usage:
-    python src/prepare_tensors.py
-    python src/prepare_tensors.py --raw_dir src/data/raw/chbmit --out_dir src/data/processed/chbmit
+    python src/prepare_tensors.py                               # defaults
+    python src/prepare_tensors.py --background_ratio 20         # more bg
+    python src/prepare_tensors.py --background_ratio 0          # keep all (risky)
+    python src/prepare_tensors.py --raw_dir src/data/raw/chbmit \
+                                  --out_dir src/data/processed/chbmit
 """
 import argparse
 import logging
@@ -45,43 +63,152 @@ def main() -> None:
     parser.add_argument("--raw_dir", default="src/data/raw/chbmit")
     parser.add_argument("--out_dir", default="src/data/processed/chbmit")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--background_ratio", type=float, default=10.0,
+        help="Background windows kept per seizure window per EDF. "
+             "Default 10.0 gives roughly balanced training. "
+             "Pass 0 to keep every background window (very large; likely OOM).",
+    )
     args = parser.parse_args()
     raw_dir = Path(args.raw_dir)
     out_dir = Path(args.out_dir)
-    _run_pipeline(raw_dir, out_dir, args.seed)
+    _run_pipeline(raw_dir, out_dir, args.seed, args.background_ratio)
 
 
-def _run_pipeline(raw_dir: Path, out_dir: Path, seed: int) -> None:
-    """Full pipeline: load -> window -> split -> save."""
+def _run_pipeline(
+    raw_dir: Path, out_dir: Path, seed: int, background_ratio: float,
+) -> None:
+    """Streaming pipeline: assign splits -> process each subject -> write chunks -> consolidate."""
     subjects = sorted([d for d in raw_dir.iterdir() if d.is_dir()])
     logger.info("Found %d subjects at %s", len(subjects), raw_dir)
-    all_windows, all_labels, all_subject_ids = [], [], []
-    for subject_dir in subjects:
-        windows, labels = _process_subject(subject_dir)
-        if windows is not None and len(windows) > 0:
-            all_windows.append(windows)
-            all_labels.append(labels)
-            all_subject_ids.extend([subject_dir.name] * len(windows))
-            logger.info("%s: %d windows (%d seizure)", subject_dir.name, len(windows), int(labels.sum()))
-    if not all_windows:
-        logger.error("No windows extracted. Check raw data path and EDF files.")
+    if not subjects:
+        logger.error("No subject directories under %s", raw_dir)
         return
-    X = np.concatenate(all_windows, axis=0)
-    y = np.concatenate(all_labels, axis=0)
-    subject_ids = np.array(all_subject_ids)
-    logger.info("Total: %d windows, %d seizure (%.1f%%)", len(y), int(y.sum()), 100 * y.mean())
-    _save_splits(X, y, subject_ids, out_dir, seed)
+
+    split_map = _assign_subjects_to_splits([s.name for s in subjects], seed)
+    logger.info("Split assignment: train=%d val=%d test=%d",
+                sum(v == "train" for v in split_map.values()),
+                sum(v == "val"   for v in split_map.values()),
+                sum(v == "test"  for v in split_map.values()))
+
+    chunk_dirs = {
+        split: (out_dir / split / "_chunks") for split in ("train", "val", "test")
+    }
+    for d in chunk_dirs.values():
+        d.mkdir(parents=True, exist_ok=True)
+
+    rng = np.random.default_rng(seed)
+    total_windows = total_seizure = 0
+    for subject_dir in subjects:
+        split = split_map[subject_dir.name]
+        windows, labels = _process_subject(subject_dir, rng, background_ratio)
+        if windows is None or len(windows) == 0:
+            logger.warning("%s: no windows extracted, skipping", subject_dir.name)
+            continue
+        chunk_path = chunk_dirs[split] / f"{subject_dir.name}.pt"
+        torch.save(
+            {
+                "data": torch.from_numpy(windows.astype(np.float32)),
+                "labels": torch.from_numpy(labels.astype(np.float32)),
+            },
+            chunk_path,
+        )
+        total_windows += len(windows)
+        total_seizure += int(labels.sum())
+        logger.info(
+            "%s -> %s: %d windows (%d seizure) saved to %s",
+            subject_dir.name, split, len(windows), int(labels.sum()), chunk_path.name,
+        )
+        del windows, labels  # free per-subject memory before next subject
+
+    logger.info(
+        "Total processed: %d windows (%d seizure, %.2f%%)",
+        total_windows, total_seizure,
+        100.0 * total_seizure / max(total_windows, 1),
+    )
+
+    for split, chunk_dir in chunk_dirs.items():
+        _consolidate_split(chunk_dir, out_dir / split)
 
 
-def _process_subject(subject_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
-    """Load all EDF files for one subject; return (windows, labels)."""
+def _assign_subjects_to_splits(
+    subject_names: List[str], seed: int,
+) -> Dict[str, str]:
+    """Deterministic subject-independent 70/15/15 split by name."""
+    unique = sorted(set(subject_names))
+    train_subs, temp_subs = train_test_split(unique, test_size=0.30, random_state=seed)
+    val_subs, test_subs = train_test_split(temp_subs, test_size=0.50, random_state=seed)
+    mapping: Dict[str, str] = {}
+    for s in train_subs:
+        mapping[s] = "train"
+    for s in val_subs:
+        mapping[s] = "val"
+    for s in test_subs:
+        mapping[s] = "test"
+    return mapping
+
+
+def _consolidate_split(chunk_dir: Path, split_dir: Path) -> None:
+    """Read every per-subject chunk under ``chunk_dir`` and emit data.pt / labels.pt.
+
+    Peak RAM during consolidation ≈ total size of this one split (not all splits).
+    Chunks are deleted afterwards.
+    """
+    chunk_files = sorted(chunk_dir.glob("*.pt"))
+    if not chunk_files:
+        logger.warning("No chunks found in %s — skipping consolidation", chunk_dir)
+        return
+
+    data_parts: List[torch.Tensor] = []
+    label_parts: List[torch.Tensor] = []
+    for chunk_path in chunk_files:
+        payload = torch.load(chunk_path, weights_only=True)
+        data_parts.append(payload["data"])
+        label_parts.append(payload["labels"])
+
+    data = torch.cat(data_parts, dim=0)
+    labels = torch.cat(label_parts, dim=0)
+    del data_parts, label_parts
+
+    split_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(data, split_dir / "data.pt")
+    torch.save(labels, split_dir / "labels.pt")
+    n_seizure = int(labels.sum().item())
+    logger.info(
+        "Consolidated %s: %d windows (%d seizure, %.2f%%) -> %s",
+        split_dir.name, len(labels), n_seizure,
+        100.0 * n_seizure / max(len(labels), 1),
+        split_dir,
+    )
+
+    # Delete the chunk files once the consolidated tensors are safely saved.
+    for chunk_path in chunk_files:
+        chunk_path.unlink(missing_ok=True)
+    try:
+        chunk_dir.rmdir()
+    except OSError:
+        pass  # non-empty (something raced); leave it for manual cleanup
+
+
+def _process_subject(
+    subject_dir: Path, rng: np.random.Generator, background_ratio: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Load every EDF for one subject and return concatenated (windows, labels).
+
+    Subsampling is applied per-EDF before concatenation so peak RAM stays
+    bounded by the largest EDF, not the whole subject.
+    """
     summary_path = next(subject_dir.glob("*-summary.txt"), None)
     seizure_intervals = _parse_summary(summary_path) if summary_path else {}
     edf_files = sorted(subject_dir.glob("*.edf"))
-    all_windows, all_labels = [], []
+    all_windows: List[np.ndarray] = []
+    all_labels: List[np.ndarray] = []
     for edf_path in edf_files:
-        windows, labels = _process_edf(edf_path, seizure_intervals.get(edf_path.name, []))
-        if windows is not None:
+        windows, labels = _process_edf(
+            edf_path, seizure_intervals.get(edf_path.name, []),
+            rng, background_ratio,
+        )
+        if windows is not None and len(windows) > 0:
             all_windows.append(windows)
             all_labels.append(labels)
     if not all_windows:
@@ -89,8 +216,11 @@ def _process_subject(subject_dir: Path) -> Tuple[np.ndarray, np.ndarray]:
     return np.concatenate(all_windows, axis=0), np.concatenate(all_labels, axis=0)
 
 
-def _process_edf(edf_path: Path, seizure_intervals: List[Tuple[float, float]]) -> Tuple:
-    """Load one EDF, select channels, window, label, normalise."""
+def _process_edf(
+    edf_path: Path, seizure_intervals: List[Tuple[float, float]],
+    rng: np.random.Generator, background_ratio: float,
+) -> Tuple:
+    """Load one EDF, select channels, window, label, normalise, subsample."""
     try:
         raw = mne.io.read_raw_edf(str(edf_path), preload=True, verbose=False)
     except Exception as exc:
@@ -102,7 +232,33 @@ def _process_edf(edf_path: Path, seizure_intervals: List[Tuple[float, float]]) -
     data = _zscore_normalise(data)
     windows = _sliding_windows(data)
     labels = _label_windows(len(windows), seizure_intervals, raw.info["sfreq"])
+    if background_ratio > 0:
+        windows, labels = _subsample_background(windows, labels, background_ratio, rng)
     return windows, labels
+
+
+def _subsample_background(
+    windows: np.ndarray, labels: np.ndarray,
+    ratio: float, rng: np.random.Generator,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Keep every seizure window and at most ``ratio * n_seizure`` background windows.
+
+    If the EDF has no seizure windows we keep at most ``ratio`` background
+    windows (tiny) so the background distribution isn't entirely lost.
+    """
+    seizure_mask = labels > 0.5
+    n_seizure = int(seizure_mask.sum())
+    n_bg_total = int((~seizure_mask).sum())
+    if n_bg_total == 0:
+        return windows, labels
+    max_bg = max(int(np.ceil(ratio * max(n_seizure, 1))), 1)
+    if max_bg >= n_bg_total:
+        return windows, labels
+    bg_idx = np.where(~seizure_mask)[0]
+    chosen_bg = rng.choice(bg_idx, size=max_bg, replace=False)
+    seiz_idx = np.where(seizure_mask)[0]
+    keep = np.sort(np.concatenate([seiz_idx, chosen_bg]))
+    return windows[keep], labels[keep]
 
 
 def _extract_channels(raw: mne.io.BaseRaw) -> np.ndarray:
@@ -172,28 +328,6 @@ def _parse_summary(summary_path: Path) -> Dict[str, List[Tuple[float, float]]]:
     except Exception as exc:
         logger.warning("Could not parse summary %s: %s", summary_path, exc)
     return intervals
-
-
-def _save_splits(
-    X: np.ndarray, y: np.ndarray, subject_ids: np.ndarray, out_dir: Path, seed: int
-) -> None:
-    """Subject-independent 70/15/15 split; save .pt files."""
-    unique_subjects = np.unique(subject_ids)
-    train_subs, temp_subs = train_test_split(unique_subjects, test_size=0.30, random_state=seed)
-    val_subs, test_subs = train_test_split(temp_subs, test_size=0.50, random_state=seed)
-    splits = {
-        "train": np.isin(subject_ids, train_subs),
-        "val": np.isin(subject_ids, val_subs),
-        "test": np.isin(subject_ids, test_subs),
-    }
-    for split_name, mask in splits.items():
-        split_dir = out_dir / split_name
-        split_dir.mkdir(parents=True, exist_ok=True)
-        torch.save(torch.tensor(X[mask], dtype=torch.float32), split_dir / "data.pt")
-        torch.save(torch.tensor(y[mask], dtype=torch.float32), split_dir / "labels.pt")
-        n_seizure = int(y[mask].sum())
-        logger.info("Saved %s: %d windows (%d seizure) -> %s", split_name, mask.sum(), n_seizure, split_dir)
-    logger.info("Done. All splits saved to %s", out_dir)
 
 
 if __name__ == "__main__":
