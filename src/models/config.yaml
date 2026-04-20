@@ -3,7 +3,8 @@
 # All training scripts load this via load_config(). No hardcoded values elsewhere.
 
 data:
-  processed_dir: "src/results/tensors/chbmit"
+  # --data_path CLI arg is the source of truth for where tensors live;
+  # README defaults to src/data/processed/chbmit.
   n_channels: 16
   time_steps: 256
   train_split: 0.70
