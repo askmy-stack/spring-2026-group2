@@ -166,11 +166,17 @@ def augment_batch(
     """
     Augment a training batch with optional seizure oversampling.
 
+    Each sample is augmented exactly once. When ``oversample_minority=True`` the
+    seizure (positive) samples are additionally duplicated with an *independent*
+    augmentation draw, so the final batch contains:
+      - all original samples, each augmented once
+      - a second copy of seizure samples, each augmented once (different noise)
+
     Args:
         eeg_batch: EEG data, shape (batch, n_channels, time_steps).
         label_batch: Binary labels, shape (batch,).
         augmenter: EEGAugmentation instance (must be in train mode).
-        oversample_minority: If True, duplicate and augment seizure samples.
+        oversample_minority: If True, add an extra augmented copy of seizures.
 
     Returns:
         Tuple of (augmented_eeg, labels) tensors.
@@ -180,15 +186,21 @@ def augment_batch(
         >>> X_aug, y_aug = augment_batch(torch.randn(8, 16, 256), torch.randint(0, 2, (8,)), aug)
     """
     augmenter.train()
-    eeg_out, labels_out = eeg_batch, label_batch
-    if oversample_minority:
-        seizure_mask = label_batch == 1
-        seizure_eeg = eeg_batch[seizure_mask]
-        if len(seizure_eeg) > 0:
-            aug_seizure = augmenter(seizure_eeg)
-            eeg_out = torch.cat([eeg_out, aug_seizure], dim=0)
-            labels_out = torch.cat([labels_out, label_batch[seizure_mask]], dim=0)
-    return augmenter(eeg_out), labels_out
+    augmented_batch = augmenter(eeg_batch)
+    if not oversample_minority:
+        return augmented_batch, label_batch
+
+    seizure_mask = label_batch == 1
+    if seizure_mask.sum() == 0:
+        return augmented_batch, label_batch
+
+    # Draw a second, independent augmentation of the raw seizures (not of the
+    # already-augmented ones) to avoid compounding noise on the duplicated copy.
+    extra_seizures = augmenter(eeg_batch[seizure_mask])
+    return (
+        torch.cat([augmented_batch, extra_seizures], dim=0),
+        torch.cat([label_batch, label_batch[seizure_mask]], dim=0),
+    )
 
 
 class MixUp(nn.Module):

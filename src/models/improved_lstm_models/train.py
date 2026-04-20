@@ -19,9 +19,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from src.models.utils.losses import FocalLoss
-from src.models.utils.metrics import compute_f1_score, compute_auc_roc, compute_sensitivity
+from src.models.utils.metrics import (
+    compute_f1_score, compute_auc_roc, compute_sensitivity,
+    compute_specificity, find_optimal_threshold,
+)
 from src.models.utils.callbacks import EarlyStopping, clip_gradients
 from src.models.utils.config_validator import validate_config
+from src.models.utils.checkpoint import save_checkpoint
 from src.models.lstm_benchmark_models.train_baseline import (
     load_config, _get_device, _build_data_loaders,
 )
@@ -101,8 +105,61 @@ def train_improved(data_path: Path, config: Dict) -> Dict:
     best_ckpt = ckpt_dir / "improved_lstm_best.pt"
     if best_ckpt.exists():
         model.load_state_dict(torch.load(best_ckpt, map_location=device, weights_only=True))
-        logger.info("Loaded best checkpoint for test evaluation.")
-    return _evaluate_improved_on_test(model, test_loader, device)
+        logger.info("Loaded best checkpoint for threshold tuning and test evaluation.")
+
+    val_probs, val_labels = _collect_probs(model, val_loader, device)
+    threshold = find_optimal_threshold(val_labels, val_probs)
+    val_pred = (val_probs >= threshold).astype(int)
+    val_metrics = {
+        "f1": compute_f1_score(val_labels, val_pred),
+        "auroc": compute_auc_roc(val_labels, val_probs),
+        "sens": compute_sensitivity(val_labels, val_pred),
+        "spec": compute_specificity(val_labels, val_pred),
+    }
+    save_checkpoint(
+        best_ckpt, model,
+        model_config=_model_config(config),
+        optimizer=optimizer,
+        epoch=config["training"]["num_epochs"],
+        val_metrics=val_metrics,
+        optimal_threshold=threshold,
+    )
+    return _evaluate_improved_on_test(model, test_loader, device, threshold=threshold)
+
+
+def _collect_probs(model: nn.Module, loader: DataLoader, device: torch.device):
+    """Run model on loader; return (probs, labels) as 1-D numpy arrays.
+
+    Uses ``squeeze(-1)`` so batches of size 1 stay 1-D (bare ``squeeze()`` would
+    collapse them to a 0-D scalar and break ``np.concatenate``).
+    """
+    model.train(False)
+    probs_all, labels_all = [], []
+    with torch.no_grad():
+        for eeg_batch, label_batch in loader:
+            eeg_batch = eeg_batch.to(device).unsqueeze(1)
+            logits = model(eeg_batch).squeeze(-1)
+            probs = torch.sigmoid(logits).detach().cpu().numpy()
+            probs_all.append(np.atleast_1d(probs))
+            labels_all.append(np.atleast_1d(label_batch.numpy()))
+    return (
+        np.concatenate(probs_all) if probs_all else np.array([], dtype=float),
+        np.concatenate(labels_all) if labels_all else np.array([], dtype=int),
+    )
+
+
+def _model_config(config: Dict) -> Dict:
+    """Kwargs needed to re-instantiate HierarchicalLSTM from config."""
+    cfg = config["models"]["improved_lstm"]
+    data_cfg = config["data"]
+    return {
+        "n_channels": data_cfg["n_channels"],
+        "time_steps": data_cfg["time_steps"],
+        "n_windows": cfg.get("n_windows", 1),
+        "hidden_size": cfg["hidden_size"],
+        "num_layers": cfg.get("num_layers", 2),
+        "dropout": cfg["dropout"],
+    }
 
 
 def _run_training_loop(
@@ -163,7 +220,7 @@ def _run_train_batch(
 ) -> float:
     """Forward + backward pass for one batch; return scalar loss."""
     optimizer.zero_grad()
-    loss = criterion(model(eeg_batch).squeeze(), label_batch.float())
+    loss = criterion(model(eeg_batch).squeeze(-1), label_batch.float())
     loss.backward()
     clip_gradients(model, max_norm=config["training"]["gradient_clip"])
     optimizer.step()
@@ -180,23 +237,17 @@ def _validate_one_epoch(
         for eeg_batch, label_batch in val_loader:
             eeg_batch, label_batch = eeg_batch.to(device), label_batch.to(device)
             eeg_batch = eeg_batch.unsqueeze(1)
-            total_loss += criterion(model(eeg_batch).squeeze(), label_batch.float()).item()
+            total_loss += criterion(model(eeg_batch).squeeze(-1), label_batch.float()).item()
     return total_loss / max(len(val_loader), 1)
 
 
-def _evaluate_improved_on_test(model: nn.Module, test_loader: DataLoader, device: torch.device) -> Dict:
+def _evaluate_improved_on_test(
+    model: nn.Module, test_loader: DataLoader, device: torch.device,
+    threshold: float = 0.5,
+) -> Dict:
     """Run inference on test split with 3D→4D unsqueeze; return F1/AUC/sensitivity."""
-    model.train(False)
-    all_labels, all_probs = [], []
-    with torch.no_grad():
-        for eeg_batch, label_batch in test_loader:
-            eeg_batch = eeg_batch.to(device).unsqueeze(1)
-            probs = torch.sigmoid(model(eeg_batch).squeeze()).cpu().numpy()
-            all_probs.extend(probs.tolist())
-            all_labels.extend(label_batch.numpy().tolist())
-    y_true = np.array(all_labels)
-    y_score = np.array(all_probs)
-    y_pred = (y_score > 0.5).astype(int)
+    y_score, y_true = _collect_probs(model, test_loader, device)
+    y_pred = (y_score >= threshold).astype(int)
     return {
         "f1": compute_f1_score(y_true, y_pred),
         "auc_roc": compute_auc_roc(y_true, y_score),
@@ -211,6 +262,7 @@ def _build_improved_model(config: Dict) -> nn.Module:
     return HierarchicalLSTM(
         n_channels=data_cfg["n_channels"],
         time_steps=data_cfg["time_steps"],
+        n_windows=cfg.get("n_windows", 1),
         hidden_size=cfg["hidden_size"],
         num_layers=cfg.get("num_layers", 2),
         dropout=cfg["dropout"],
