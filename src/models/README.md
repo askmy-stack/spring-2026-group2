@@ -1,134 +1,196 @@
 # EEG Seizure Detection — Model Directory
 
-Four model directories for CHB-MIT EEG seizure prediction, with shared utilities.
+Canonical pipeline: **three training directories + one shared utilities package + one orchestrator**. Everything else has been deleted (root-level duplicates, superseded `improved/` and `architectures/` folders) or archived under `_experimental/` (research WIP that is not wired into the canonical pipeline).
 
-## Directory Structure
+## Directory Layout
 
 ```
 src/models/
-├── config.yaml                      # Single source of truth for all hyperparameters
-├── utils/                           # Shared losses, metrics, callbacks, config validation
+├── config.yaml                   # Single source of truth for hyperparameters
+├── run_all_models.py             # Orchestrator: runs all three phases sequentially
+├── README.md                     # This file
 │
-├── lstm_benchmark_models/           # Dir 1/4: Benchmark LSTM models (m1–m6)
-│   ├── architectures/               # M1 Vanilla, M2 BiLSTM, M3 CrissCross, M4 CNN-LSTM,
-│   │                                #   M5 FeatureBiLSTM, M6 Graph BiLSTM
-│   ├── modules/                     # Channel attention, criss-cross attention, graph attention
-│   └── train_baseline.py            # Training script for m1–m6
+├── utils/                        # Shared across every training/inference entry point
+│   ├── losses.py                 # FocalLoss (with pos_weight + label smoothing)
+│   ├── metrics.py                # F1 / AUROC / sens / spec / find_optimal_threshold
+│   ├── callbacks.py              # EarlyStopping, gradient clipping
+│   ├── config_validator.py       # Validates config.yaml shape
+│   └── checkpoint.py             # UNIFIED .pt schema — save/load_checkpoint
 │
-├── improved_lstm_models/            # Dir 2/4: Enhanced LSTM with augmentation
-│   ├── architectures/               # HierarchicalLSTM (two-level CNN + BiLSTM)
-│   ├── augmentation.py              # EEG augmentation (time shift, noise, channel dropout, etc.)
-│   ├── ensemble.py                  # Multi-model ensemble predictor
-│   └── train.py                     # Training with warmup cosine schedule + augmentation
+├── lstm_benchmark_models/        # Phase 1: m1–m6 LSTM/CNN baselines
+│   ├── architectures/            #   m1 Vanilla, m2 BiLSTM, m3 CrissCross,
+│   │                             #   m4 CNN-LSTM, m5 FeatureBiLSTM, m6 GraphBiLSTM
+│   ├── modules/                  #   attention blocks, graph attention
+│   └── train_baseline.py         #   → writes unified-schema .pt
 │
-├── ensemble_transformers/           # Dir 3/4: VQ-Transformer + 7-model ensemble
-│   ├── architectures/               # M7 VQ-Transformer
-│   ├── modules/                     # Vector quantizer with EMA codebook
-│   ├── ensemble.py                  # 7-model ensemble (m1–m6 + m7)
-│   └── train_ensemble.py            # Ensemble evaluation CLI
+├── improved_lstm_models/         # Phase 2: HierarchicalLSTM + augmentation
+│   ├── architectures/            #   two-level CNN + BiLSTM
+│   ├── augmentation.py           #   time shift, noise, channel dropout, mixup
+│   ├── train.py                  #   early-stops on val-F1 (not val-loss)
+│   └── ensemble.py               #   EnsemblePredictor class + CLI over .pt dir
 │
-└── hugging_face_mamba_moe/          # Dir 4/4: Mamba SSM + MoE + HuggingFace CNNs
-    ├── architectures/               # EEGMamba, EEGMambaMoE, 8 HF CNN models,
-    │   │                            #   4 pretrained wrappers (BENDR, BIOT, EEGPT, ST-EEGFormer)
-    │   └── pretrained/              # HF Hub pretrained model wrappers with input validation
-    ├── modules/                     # Mamba SSM blocks, MoE routing, CNN building blocks
-    ├── train_mamba.py               # Mamba/MoE training with auxiliary load-balance loss
-    └── train_hf.py                  # Generic HuggingFace model training
+├── hugging_face_mamba_moe/       # Phase 3: Mamba SSM, MoE, HF CNNs, pretrained wrappers
+│   ├── architectures/            #   EEGMamba, EEGMambaMoE, 8 HF CNNs,
+│   │   └── pretrained/           #   4 HF-Hub wrappers (BENDR, BIOT, EEGPT, ST-EEGFormer)
+│   ├── modules/                  #   Mamba SSM blocks, MoE routing, CNN primitives
+│   ├── train_mamba.py            #   Mamba / MoE training (+ aux load-balance loss)
+│   ├── train_hf.py               #   Generic HF model trainer (unified-schema save)
+│   └── ensemble_hf.py            #   Ensemble over all trained HF checkpoints
+│
+├── tools/                        # Developer tools
+│   └── infer_edf.py              #   Smoke test: load .pt + run on a raw .edf file
+│
+├── legacy_baseline/              # Preserved only so baseline_results.json stays reproducible
+│
+└── _experimental/                # Archived research WIP — NOT on the canonical path
+    ├── approach2/                #   7-model stacking ensemble w/ BO meta-learner
+    ├── approach3/                #   Mamba distillation + diffusion pretraining
+    └── ensemble_transformers/    #   VQ-Transformer + 7-model ensemble
 ```
 
 ## Prerequisites
 
 ```bash
 pip install torch numpy scikit-learn pyyaml mne
-# For HuggingFace pretrained models (optional):
-pip install braindecode huggingface_hub safetensors
+# For the HuggingFace pretrained wrappers (optional):
+pip install 'braindecode[hug]' huggingface_hub safetensors
 ```
 
-## Step 1: Prepare Data
+## End-to-End Workflow
 
-Convert raw CHB-MIT EDF files into tensor splits:
+### 1. Prepare Data
+
+Convert raw CHB-MIT EDF files to tensor splits with the shared preprocessing
+pipeline (`src/data_loader/core/signal.py`: resample → bandpass → notch → avg-reference):
 
 ```bash
-python src/prepare_tensors.py \
+python -m src.data_loader.precache \
     --raw_dir src/data/raw/chbmit \
     --out_dir src/data/processed/chbmit
 ```
 
-This produces `train/`, `val/`, `test/` subdirectories, each containing:
-- `data.pt` — shape `(N, 16, 256)` float32 (16 channels × 256 timesteps at 256 Hz)
-- `labels.pt` — shape `(N,)` float32 (0=background, 1=seizure)
+Output layout:
 
-## Step 2: Train Models
-
-All training scripts read hyperparameters from `src/models/config.yaml`.
-
-### Directory 1 — LSTM Benchmarks (m1–m6)
-
-```bash
-python -m src.models.lstm_benchmark_models.train_baseline \
-    --model m1_vanilla_lstm \
-    --data_path src/data/processed/chbmit
-
-# Available models: m1_vanilla_lstm, m2_bilstm, m3_criss_cross,
-#                   m4_cnn_lstm, m5_feature_bilstm, m6_graph_bilstm
+```
+src/data/processed/chbmit/
+├── train/  data.pt  labels.pt
+├── val/    data.pt  labels.pt
+└── test/   data.pt  labels.pt
 ```
 
-### Directory 2 — Improved LSTM (HierarchicalLSTM + Augmentation)
+Tensors are `(N, 16, 256)` float32 at 256 Hz with 1-second windows; labels are `(N,)` long.
+
+### 2. Train Models
+
+All training scripts read `src/models/config.yaml` and write a **unified
+checkpoint** (see below) to `outputs/models/` by default.
 
 ```bash
+# Phase 1 — benchmarks (m1–m6, or 'all')
+python -m src.models.lstm_benchmark_models.train_baseline \
+    --model m1_vanilla_lstm --data_path src/data/processed/chbmit
+
+# Phase 2 — improved LSTM (HierarchicalLSTM + augmentation)
 python -m src.models.improved_lstm_models.train \
     --data_path src/data/processed/chbmit
-```
 
-### Directory 3 — Ensemble Evaluation (7-model)
-
-Requires trained checkpoints from Dir 1 + Dir 3 in `outputs/models/`:
-
-```bash
-python -m src.models.ensemble_transformers.train_ensemble \
-    --data_path src/data/processed/chbmit \
-    --checkpoint_dir outputs/models
-```
-
-### Directory 4 — Mamba / Mamba-MoE
-
-```bash
+# Phase 3a — Mamba / Mamba-MoE
 python -m src.models.hugging_face_mamba_moe.train_mamba \
-    --model eeg_mamba \
-    --data_path src/data/processed/chbmit
+    --model eeg_mamba --data_path src/data/processed/chbmit
 
-# Or with Mixture of Experts:
-python -m src.models.hugging_face_mamba_moe.train_mamba \
-    --model eeg_mamba_moe \
-    --data_path src/data/processed/chbmit
-```
-
-### Directory 4 — HuggingFace CNN Models
-
-```bash
+# Phase 3b — HuggingFace models (eegnet, deepconvnet, eegpt_pretrained, …)
 python -m src.models.hugging_face_mamba_moe.train_hf \
-    --model baseline_cnn_1d \
-    --batch_size 32
+    --model eegnet --data_path src/data/processed/chbmit
 
-# Available: baseline_cnn_1d, enhanced_cnn_1d, eegnet_local, eegnet,
-#            deepconvnet, multiscale_cnn, multiscale_attention_cnn,
-#            st_eegformer, bendr_pretrained, biot_pretrained,
-#            eegpt_pretrained, hf_st_eegformer
+# Or run every phase at once
+python -m src.models.run_all_models --data_path src/data/processed/chbmit
 ```
+
+### 3. Ensemble
+
+Once ≥ 2 checkpoints exist, ensemble them with the helper CLIs:
+
+```bash
+# Ensemble all improved-LSTM .pt files in a directory
+python -m src.models.improved_lstm_models.ensemble \
+    --data_path src/data/processed/chbmit \
+    --ckpt_dir src/models/improved_lstm_models/checkpoints
+
+# Ensemble all HF-model checkpoints
+python -m src.models.hugging_face_mamba_moe.ensemble_hf \
+    --data_path src/data/processed/chbmit --strategy weighted
+```
+
+Both auto-discover `.pt` files, rebuild models via `load_checkpoint`, run per-member
+inference, and report **mean** and **val-F1-weighted** ensemble metrics with the
+threshold tuned on validation data.
+
+### 4. Inference Smoke Test
+
+Verify that a checkpoint is loadable and runnable end-to-end on a raw EDF:
+
+```bash
+python -m src.models.tools.infer_edf \
+    --edf src/data/raw/chbmit/chb01/chb01_01.edf \
+    --ckpt outputs/models/m1_vanilla_lstm_best.pt
+```
+
+The tool reads the checkpoint's stored `input_spec` + `preprocess` + `optimal_threshold`,
+so no external configuration is needed.
+
+## Unified Checkpoint Schema
+
+Every canonical training script writes `.pt` files via
+`src.models.utils.checkpoint.save_checkpoint`. The on-disk payload is:
+
+| Key                     | Type        | Purpose                                                       |
+|-------------------------|-------------|---------------------------------------------------------------|
+| `schema_version`        | int         | Currently `1`; bump on breaking changes.                      |
+| `model_class`           | str         | `"pkg.module.ClassName"` — used to auto-rebuild the module.   |
+| `model_config`          | dict        | Constructor kwargs for `_try_build_model`.                    |
+| `model_state_dict`      | dict        | Tensor weights.                                               |
+| `optimizer_state_dict`  | dict / None | For training resume.                                          |
+| `epoch`                 | int         | Last epoch at save time.                                      |
+| `val_metrics`           | dict        | `{"f1", "auroc", "sens", "spec"}` at save time.               |
+| `optimal_threshold`     | float       | Decision threshold tuned on validation data.                  |
+| `input_spec`            | dict        | `{"channels": 16, "sfreq": 256, "window_sec": 1.0}`.          |
+| `preprocess`            | dict        | Params needed to reproduce preprocessing at inference time.   |
+| `git_commit`            | str / None  | Short SHA for provenance.                                     |
+
+Load any checkpoint uniformly:
+
+```python
+from src.models.utils.checkpoint import load_checkpoint
+model, payload = load_checkpoint("outputs/models/m1_vanilla_lstm_best.pt")
+threshold = payload["optimal_threshold"]
+```
+
+If auto-rebuild fails (e.g., HF pretrained wrappers that require a factory), the
+caller can still access the raw `payload["model_state_dict"]` and build the
+model manually.
 
 ## Configuration
 
-Edit `src/models/config.yaml` to change hyperparameters. Key sections:
+All hyperparameters live in `src/models/config.yaml`:
 
-| Section | Controls |
-|---------|----------|
-| `data` | n_channels, time_steps, split ratios |
-| `training` | lr, batch_size, epochs, pos_weight, gradient_clip, label_smoothing |
-| `focal_loss` | gamma (2.0), reduction |
-| `models.*` | Per-directory model hyperparameters |
-| `outputs` | Checkpoint and results directories |
+| Section         | Controls                                                                |
+|-----------------|-------------------------------------------------------------------------|
+| `data`          | `n_channels`, `time_steps`, split layout                                |
+| `training`      | `learning_rate`, `batch_size`, `num_epochs`, `pos_weight`, grad clip    |
+| `focal_loss`    | `gamma`, `reduction`                                                    |
+| `models.*`      | Per-phase model hyperparameters; may override `training` keys           |
+| `outputs`       | `checkpoint_dir`, `results_dir`                                         |
 
-## Outputs
+`src/data_loader/config.yaml` is intentionally separate (controls preprocessing
+and caching — not the model pipeline). The two are kept decoupled on purpose.
 
-- **Checkpoints**: `outputs/models/{model_name}_best.pt`
-- **Metrics reported**: F1-score, AUC-ROC, Sensitivity (printed at end of training)
+## What Was Deleted / Archived
+
+- **Deleted** (superseded by canonical dirs): root-level `attention_bilstm.py`,
+  `bilstm.py`, `cnn_lstm.py`, `feature_bilstm.py`, `vanilla_lstm.py`,
+  `compare.py`, `train.py`, `ensemble.py`, `run_benchmark.py`, and the
+  `improved/`, `improved_lstm/`, `architectures/` directories.
+- **Archived** to `_experimental/` (non-canonical but non-trivial IP):
+  `approach2/`, `approach3/`, `ensemble_transformers/`.
+- **Kept** at top level for reproducibility of the research paper draft:
+  `legacy_baseline/`.
