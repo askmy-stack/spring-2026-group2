@@ -62,14 +62,14 @@ def main():
     X_train, y_train, train_cols, _ = load_split(
         cfg["paths"]["train_csv"], cfg["target_col"], cfg["data"]["meta_cols"], cfg["data"]["dtype"]
     )
-    X_val, y_val, _, _ = load_split(
+    X_val, y_val, val_cols, _ = load_split(
         cfg["paths"]["val_csv"], cfg["target_col"], cfg["data"]["meta_cols"], cfg["data"]["dtype"]
     )
-    X_test, y_test, _, _ = load_split(
+    X_test, y_test, test_cols, _ = load_split(
         cfg["paths"]["test_csv"], cfg["target_col"], cfg["data"]["meta_cols"], cfg["data"]["dtype"]
     )
 
-    validate_feature_columns(train_cols, train_cols, train_cols)
+    validate_feature_columns(train_cols, val_cols, test_cols)
 
     base_params = dict(cfg["model_params"])
 

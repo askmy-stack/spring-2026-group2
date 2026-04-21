@@ -416,7 +416,7 @@ def train(
             for p in model.parameters():
                 p.grad = None
             logits, M_loss = model(Xb)
-            loss = focal_loss(logits, yb, w, focal_gamma) - lambda_sparse * M_loss
+            loss = focal_loss(logits, yb, w, focal_gamma) + lambda_sparse * M_loss
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
@@ -459,7 +459,7 @@ def train(
                 logging.info("Early stopping at epoch %d", epoch)
                 break
 
-    ckpt = torch.load(models_dir / "best_model.pt", map_location=device)
+    ckpt = torch.load(models_dir / "best_model.pt", map_location=device, weights_only=False)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     logging.info("Restored best model from epoch %d", best_epoch)

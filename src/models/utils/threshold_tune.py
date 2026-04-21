@@ -133,7 +133,7 @@ def main():
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Could not find {ckpt_path}")
 
-    ckpt = torch.load(ckpt_path, map_location=device_name)
+    ckpt = torch.load(ckpt_path, map_location=device_name, weights_only=False)
     train_args = ckpt["args"]
 
     dataset = MemmapTabularDataset(args.memmap_dir, args.split, args.limit)

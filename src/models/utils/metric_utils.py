@@ -24,6 +24,19 @@ def compute_binary_metrics(
 ) -> dict:
     y_pred = predict_with_threshold(y_prob, threshold)
 
+    # Guard: roc_auc_score and average_precision_score crash when only one
+    # class is present in y_true (e.g. val split with 0 seizure windows).
+    if len(np.unique(y_true)) < 2:
+        return {
+            "threshold": float(threshold),
+            "aucpr": 0.0,
+            "roc_auc": 0.0,
+            "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+            "precision": float(precision_score(y_true, y_pred, zero_division=0)),
+            "recall": float(recall_score(y_true, y_pred, zero_division=0)),
+            "confusion_matrix": confusion_matrix(y_true, y_pred).tolist(),
+        }
+
     metrics = {
         "threshold": float(threshold),
         "aucpr": float(average_precision_score(y_true, y_prob)),

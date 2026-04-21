@@ -117,7 +117,8 @@ class AdvancedFeatureExtractor:
     def _bandpower(freqs, psd, band):
         lo, hi = float(band[0]), float(band[1])
         idx = (freqs >= lo) & (freqs <= hi)
-        return float(np.trapezoid(psd[idx], freqs[idx])) if np.any(idx) else 0.0
+        _trapz = getattr(np, "trapezoid", np.trapz)
+        return float(_trapz(psd[idx], freqs[idx])) if np.any(idx) else 0.0
     @staticmethod
     def _spectral_entropy(psd, normalize=True):
         psd = np.asarray(psd, dtype=np.float64)
@@ -261,7 +262,8 @@ class AdvancedFeatureExtractor:
             for ch in range(n_ch):
                 psd = psd_all[ch]
                 pfx = f"ch{ch}_"
-                total_power = float(np.trapezoid(psd, freqs_w)) if len(freqs_w) > 1 else 0.0
+                _trapz = getattr(np, "trapezoid", np.trapz)
+                total_power = float(_trapz(psd, freqs_w)) if len(freqs_w) > 1 else 0.0
                 feats[pfx + "total_power"] = total_power
                 band_powers = {}
                 for bname, brng in self.bands.items():

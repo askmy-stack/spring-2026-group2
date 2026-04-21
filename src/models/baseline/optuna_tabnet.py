@@ -215,7 +215,7 @@ def run_training(
                 p.grad = None
             logits, M_loss = clf.network(Xb)
             loss = torch.nn.functional.cross_entropy(logits, yb, weight=w) \
-                   - lambda_sparse * M_loss
+                   + lambda_sparse * M_loss
             loss.backward()
             torch.nn.utils.clip_grad_norm_(clf.network.parameters(), grad_clip)
             clf._optimizer.step()
@@ -408,7 +408,7 @@ def main() -> None:
     logging.info("Retrain finished in %.2f seconds", train_seconds)
 
     # restore best checkpoint
-    ckpt = torch.load(models_dir / "best_model.pt", map_location=device_name)
+    ckpt = torch.load(models_dir / "best_model.pt", map_location=device_name, weights_only=False)
     clf.network.load_state_dict(ckpt["network_state_dict"])
     clf.network.eval()
 

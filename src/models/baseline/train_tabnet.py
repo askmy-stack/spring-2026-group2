@@ -256,7 +256,7 @@ def train(clf: TabNetClassifier, train_loader: DataLoader,
             logits, M_loss = clf.network(Xb)
             loss = torch.nn.functional.cross_entropy(
                 logits, yb, weight=weight_tensor
-            ) - lambda_sparse * M_loss
+            ) + lambda_sparse * M_loss
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(clf.network.parameters(), grad_clip)
@@ -309,7 +309,7 @@ def train(clf: TabNetClassifier, train_loader: DataLoader,
                 logging.info("Early stopping at epoch %d", epoch)
                 break
 
-    ckpt = torch.load(models_dir / "best_model.pt", map_location=clf.device)
+    ckpt = torch.load(models_dir / "best_model.pt", map_location=clf.device, weights_only=False)
     clf.network.load_state_dict(ckpt["network_state_dict"])
     clf.network.eval()
     logging.info("Restored best model from epoch %d", best_epoch)

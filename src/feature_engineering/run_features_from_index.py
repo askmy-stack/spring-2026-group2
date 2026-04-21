@@ -135,8 +135,8 @@ def main():
     cfg = load_config(args.config)
     split = args.split
 
-    # paths
-    wi_key = f"window_index_{split}"
+    # paths — YAML uses keys "train_csv"/"val_csv"/"test_csv" under [window_index]
+    wi_key = f"{split}_csv"
     wi_path = cfg.get("window_index", {}).get(wi_key, "")
     if not wi_path:
         _project_root = Path(__file__).resolve().parents[1]
