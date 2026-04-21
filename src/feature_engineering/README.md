@@ -131,6 +131,9 @@ io:
 | Mean | Detect baseline shift | μ = (1/N) Σ xᵢ | A |
 | Std | Amplitude variability | √[(1/N) Σ(xᵢ − μ)²] | A |
 | RMS | Signal energy magnitude | √[(1/N) Σ xᵢ²] | A |
+| Min | Minimum amplitude | min(x) | A |
+| Max | Maximum amplitude | max(x) | A |
+| Range | Amplitude spread | max(x) − min(x) | A |
 | Line Length | Rapid transitions | Σ |xᵢ − xᵢ₋₁| | C |
 | ZCR | Oscillatory activity | (1/N) Σ I(sign change) | A, C |
 | Skew | Asymmetric spike detection | E[(x−μ)³]/σ³ | A |
@@ -150,25 +153,26 @@ io:
 |--------|---------|--------|
 | Sample Entropy | Irregularity detection | A |
 | Permutation Entropy | Temporal complexity | A |
-| Lempel-Ziv | Signal compressibility | A |
 
 ## Frequency-Domain (Welch PSD)
 
 | Method | Purpose | Source |
 |--------|---------|--------|
 | Total Power | Overall spectral energy | B |
-| Band Power (δ θ α β γ) | Frequency redistribution | B, C |
-| Relative Power | Normalized band energy | C |
+| Band Power (δ θ α β γ) | Frequency redistribution across 5 bands | B, C |
+| Relative Power (δ θ α β γ) | Normalized band energy (band / total) | C |
 | Spectral Entropy | Spectral concentration | C |
-| Peak Frequency | Dominant oscillation | A, B |
+| FFT Dominant Frequency | Frequency with highest FFT magnitude | A, B |
 
 ## Wavelet Features
 
 | Method | Purpose | Source |
 |--------|---------|--------|
-| Approx Energy | Low-frequency seizure energy | A, C |
-| Detail Energy | Transient burst detection | A, C |
-| Wavelet Entropy | Multi-scale dispersion | C |
+| Approx Energy (wav_E_A) | Low-frequency seizure energy | A, C |
+| Detail Energy D1 (wav_E_D1) | High-frequency transient bursts | A, C |
+| Detail Energy D2 (wav_E_D2) | Mid-high frequency activity | A, C |
+| Detail Energy D3 (wav_E_D3) | Mid-frequency transient detection | A, C |
+| Wavelet Entropy (wav_entropy) | Multi-scale signal dispersion | C |
 
 ## Connectivity Features
 
