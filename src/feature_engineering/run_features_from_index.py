@@ -21,8 +21,22 @@ mne.set_log_level("ERROR")
 #  helpers
 # ------------------------------------------------------------------ #
 def load_config(path):
-    with open(path) as f:
-        return yaml.safe_load(f)
+    """Load YAML and resolve relative paths from the config file's directory."""
+    cfg_path = Path(path).resolve()
+    cfg_dir  = cfg_path.parent
+    with open(cfg_path) as f:
+        raw = yaml.safe_load(f)
+
+    def _resolve(obj):
+        if isinstance(obj, dict):
+            return {k: _resolve(v) for k, v in obj.items()}
+        if isinstance(obj, str) and ("/" in obj or "\\" in obj):
+            p = Path(obj)
+            if not p.is_absolute():
+                return str((cfg_dir / p).resolve())
+        return obj
+
+    return _resolve(raw)
 
 def get_sfreq_from_edf(edf_path):
     raw = mne.io.read_raw_edf(edf_path, preload=False, verbose=False)
