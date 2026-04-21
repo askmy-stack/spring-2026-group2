@@ -189,9 +189,18 @@ def main():
         merge_chunks_no_dedup(ckpt_dir, output_csv)
         return
 
-    # get sfreq from first file
-    sfreq = get_sfreq_from_edf(remaining[0])
-    print(f"  Sample freq: {sfreq} Hz")
+    # get sfreq from first readable file (crash-safe)
+    sfreq = None
+    for candidate in remaining[:5]:
+        try:
+            sfreq = get_sfreq_from_edf(candidate)
+            print(f"  Sample freq: {sfreq} Hz (from {Path(candidate).name})")
+            break
+        except Exception as e:
+            print(f"  [WARN] Could not read sfreq from {Path(candidate).name}: {e}")
+    if sfreq is None:
+        sfreq = 256.0
+        print(f"  [WARN] Falling back to default sfreq={sfreq} Hz")
 
     # extractor
     extractor = AdvancedFeatureExtractor(sfreq=sfreq, cfg=cfg)

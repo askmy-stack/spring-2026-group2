@@ -136,17 +136,20 @@ def write_split(
     X.flush()
     y.flush()
 
+    # Use row_ptr (actual rows written) not n_rows (line-count estimate).
+    # n_rows can be inflated by blank trailing lines; phantom zero rows
+    # would otherwise corrupt val/test metrics silently.
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump({
             "split":              split,
-            "rows":               n_rows,
+            "rows":               row_ptr,
             "features":           n_features,
             "x_path":             str(x_path),
             "y_path":             str(y_path),
             "feature_names_path": str(out_dir / "feature_names.json"),
         }, f, indent=2)
 
-    logging.info("[%s] done: %d rows, %d features", split, n_rows, n_features)
+    logging.info("[%s] done: %d rows, %d features", split, row_ptr, n_features)
 
 
 def main() -> None:
