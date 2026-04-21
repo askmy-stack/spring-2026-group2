@@ -132,7 +132,23 @@ def _training_loop(
         cur_f1 = val_m.get("f1", 0.0)
         if cur_f1 > best_val_f1:
             best_val_f1, best_epoch, no_improve = cur_f1, epoch, 0
-            torch.save(model.state_dict(), ckpt_dir / "best_model.pt")
+            model_config = {
+                "name": args.model,
+                "in_channels": int(getattr(args, "channels", 16)),
+                "num_classes": int(args.num_classes),
+                "n_times": int(getattr(args, "samples", 256)),
+                "sfreq": int(getattr(args, "sfreq", 256)),
+                "dropout": float(args.dropout),
+                "freeze_backbone": bool(args.freeze_backbone),
+            }
+            save_checkpoint(
+                ckpt_dir / "best_model.pt", model,
+                model_config=model_config,
+                model_builder="src.models.hugging_face_mamba_moe.architectures.hf_factory.create_hf_model",
+                epoch=epoch,
+                val_metrics=val_m,
+                optimal_threshold=float(threshold),
+            )
         else:
             no_improve += 1
             if no_improve >= args.patience:

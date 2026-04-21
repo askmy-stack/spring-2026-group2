@@ -82,6 +82,9 @@ def train_baseline(model_name: str, data_path: Path, config: Dict) -> Dict:
     stopper = EarlyStopping(
         patience=config["training"]["early_stopping_patience"],
         checkpoint_path=ckpt_dir / f"{model_name}_best.pt",
+        model_config=model_kwargs,
+        input_spec={"channels": config["data"]["n_channels"], "time_steps": config["data"]["time_steps"]},
+        preprocess=config.get("preprocess", {}),
     )
     scaler = torch.amp.GradScaler(enabled=(device.type == "cuda"))
     _run_training_loop(model, train_loader, val_loader, criterion, optimizer, scheduler, stopper, config, device, scaler)
@@ -123,7 +126,7 @@ def _run_training_loop(
         train_loss = _train_one_epoch(model, train_loader, criterion, optimizer, config, device, scaler)
         val_loss = _validate_one_epoch(model, val_loader, criterion, device)
         scheduler.step()
-        stopper.step(val_loss, model)
+        stopper.step(epoch, val_loss, model, val_metrics={"val_loss": val_loss})
         logger.info("Epoch %d/%d — train=%.4f val=%.4f", epoch + 1, num_epochs, train_loss, val_loss)
         if stopper.should_stop:
             logger.info("Early stopping triggered.")
