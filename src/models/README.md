@@ -225,6 +225,82 @@ model, payload = rehydrate_from_hub(
 )
 ```
 
+## Two-Tier Meta Ensemble
+
+Per-family ensembles each dump `val_probs.npy` / `test_probs.npy` (plus labels)
+next to their `ensemble_metrics.json`. A thin top-level meta-ensemble combines
+those arrays — no model reload, no GPU required.
+
+```text
+┌──────────────────── meta_ensemble.py ────────────────────┐
+│   mean / weighted / rank_average / logistic_stacking     │
+└──────────────────────────────────────────────────────────┘
+        │                    │                    │
+  LSTM family           Mamba family          HF family
+  ensemble.py           ensemble_mamba.py     ensemble_hf.py
+  (m1–m7, im1–im7,      (eeg_mamba,           (baseline_cnn_1d,
+   HierarchicalLSTM)     eeg_mamba_moe)        enhanced_cnn_1d, …)
+```
+
+```bash
+# 1. Build each family's ensemble (writes val/test probs.npy next to metrics)
+python -m src.models.improved_lstm_models.ensemble \
+    --data_path $DATA \
+    --out_dir outputs/ensemble/lstm
+
+python -m src.models.hugging_face_mamba_moe.ensemble_mamba \
+    --data_path $DATA \
+    --out_dir outputs/ensemble/mamba
+
+python -m src.models.hugging_face_mamba_moe.ensemble_hf \
+    --data_path $DATA
+
+# 2. Combine families
+python -m src.models.meta_ensemble \
+    --family_dir outputs/ensemble/lstm \
+    --family_dir outputs/ensemble/mamba \
+    --family_dir src/results/model/ensemble \
+    --strategy weighted \
+    --out_dir outputs/ensemble/meta
+```
+
+Why two tiers? Each family has its own I/O contract (sigmoid vs softmax, 3-D
+vs 4-D input, distinct threshold calibration). Calibrating each family first
+and then combining probabilities dodges those mismatches and keeps per-family
+bugs from silently corrupting the top-level ensemble.
+
+## Retraining
+
+Two passes are supported: a short one that only touches the broken/weak
+models, and a full retrain once the new `config.yaml` bumps are in effect.
+
+```bash
+# --- Pass 1: fix + retune (~3–4 h on one A100) ----------------------------
+# Mamba: threshold tuning on val + NaN guard + LR warmup.
+python -m src.models.hugging_face_mamba_moe.train_mamba \
+    --model eeg_mamba     --data_path $DATA
+python -m src.models.hugging_face_mamba_moe.train_mamba \
+    --model eeg_mamba_moe --data_path $DATA
+
+# Previously-skipped HF models (biot 200 Hz / st_eegformer 128 Hz / bendr 20 ch
+# are now handled via runtime resample or zero-pad in train_hf._load_data):
+for m in biot_pretrained st_eegformer hf_st_eegformer bendr_pretrained \
+         multiscale_attention_cnn ; do
+  python -m src.models.hugging_face_mamba_moe.train_hf \
+      --model "$m" --data_path $DATA --train_augment
+done
+
+# --- Pass 2: full retrain (~12–16 h overnight) ----------------------------
+python -m src.models.lstm_benchmark_models.train_baseline --model all --data_path $DATA
+python -m src.models.improved_lstm_models.train --data_path $DATA
+python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+    --model all --data_path $DATA
+python -m src.models.hugging_face_mamba_moe.train_hf \
+    --model all --data_path $DATA --train_augment
+```
+
+After each pass, rebuild the family ensembles and rerun the meta ensemble.
+
 ## Configuration
 
 All hyperparameters live in `src/models/config.yaml`:

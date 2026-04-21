@@ -12,13 +12,14 @@ data:
   test_split: 0.15
 
 training:
-  learning_rate: 0.0005
+  # Global defaults; per-model blocks below override as needed.
+  learning_rate: 0.0003       # was 0.0005 — more stable across Mamba / HF / LSTM
   batch_size: 32
-  num_epochs: 100
+  num_epochs: 60              # was 100 — early-stop still kicks in; less compute
   pos_weight: 3.0
   early_stopping_patience: 15
   gradient_clip: 1.0
-  warmup_epochs: 5
+  warmup_epochs: 8            # was 5 — needed for Mamba-MoE stability
   weight_decay: 0.01
   label_smoothing: 0.1
   aug_prob: 0.5
@@ -29,20 +30,20 @@ focal_loss:
 
 models:
   lstm_benchmark:
-    hidden_size: 128
+    hidden_size: 192          # was 128 — wider model, same data size
     num_layers: 2
     num_heads: 4
-    dropout: 0.3
+    dropout: 0.4              # was 0.3 — pair with wider hidden to avoid overfit
 
   improved_lstm:
-    hidden_size: 96           # was 128 — reduce capacity to fight overfit
+    hidden_size: 128          # was 96 — restored; extra dropout keeps regularisation
     num_layers: 2
     n_windows: 1
-    dropout: 0.5              # was 0.3 — stronger regularisation
-    learning_rate: 0.00005
+    dropout: 0.45             # was 0.5 — marginally less aggressive with new LR
+    learning_rate: 0.0001     # was 5e-5 — slightly higher to match lower patience
     warmup_epochs: 10
-    early_stopping_patience: 10   # was 20 — stop before val loss diverges
-    weight_decay: 0.05        # per-model override; global remains 0.01
+    early_stopping_patience: 10
+    weight_decay: 0.05
 
   improved_benchmark:
     common:
@@ -52,11 +53,11 @@ models:
       stochastic_depth: 0.1
       weight_decay: 0.05
       learning_rate: 3.0e-4
-      mixup_alpha: 0.2
+      mixup_alpha: 0.3        # was 0.2 — stronger mixup fights window leakage
       tta_shifts: [-5, 0, 5]
       swa_start_frac: 0.75
-      k_folds: 3
-      seeds: [42, 43, 44]
+      k_folds: 5              # was 3 — more reliable CV estimate
+      seeds: [42, 43, 44, 45, 46]
 
     im1_vanilla_lstm:   { hidden_size: 192, dropout: 0.4 }
     im2_bilstm:         { hidden_size: 192, dropout: 0.4 }
@@ -76,15 +77,15 @@ models:
     ensemble_strategy: "weighted"
 
   hugging_face_mamba_moe:
-    d_model: 128
+    d_model: 192              # was 128 — deeper state helps seizure context
     d_state: 16
     d_conv: 4
-    n_layers: 4
+    n_layers: 6               # was 4 — stack more SSM blocks
     num_experts: 8
     top_k: 2
-    dropout: 0.1
+    dropout: 0.3              # was 0.1 — combat overfit (train/val gap was 240x)
     bidirectional: true
-    moe_loss_weight: 0.01
+    moe_loss_weight: 0.001    # was 0.01 — fixes NaN divergence from epoch 11
 
 outputs:
   checkpoint_dir: "outputs/models"

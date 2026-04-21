@@ -252,7 +252,19 @@ def main() -> None:
     )
     with open(out_dir / "ensemble_metrics.json", "w") as fh:
         json.dump({"members": [p.name for p in ckpts], "results": results}, fh, indent=2)
-    logger.info("Wrote ensemble meta -> %s", out_dir)
+
+    # Dump combined soft probabilities for the meta-ensemble. We write the
+    # ``weighted`` strategy's probs by default (higher val F1 in every run so
+    # far) plus the corresponding labels; the meta-ensemble treats these as
+    # the LSTM family's contribution.
+    weighted_w = np.asarray(weights)
+    val_final = _combine(val_probs_per_model, weighted_w)
+    test_final = _combine(test_probs_per_model, weighted_w)
+    np.save(out_dir / "val_probs.npy", val_final)
+    np.save(out_dir / "val_labels.npy", val_true)
+    np.save(out_dir / "test_probs.npy", test_final)
+    np.save(out_dir / "test_labels.npy", test_true)
+    logger.info("Wrote ensemble meta -> %s (+val/test probs.npy)", out_dir)
 
 
 def _discover_checkpoints(ckpt_dir: Path) -> List[Path]:

@@ -66,9 +66,18 @@ def main() -> None:
 
     for info in models_info:
         name, model = info["name"], info["model"]
-        logger.info("Generating predictions: %s", name)
-        val_probs = _predict(model, val_dl, device)
-        test_probs = _predict(model, test_dl, device)
+        logger.info("Loading predictions: %s", name)
+        # Prefer pre-computed probs (written by train_hf._run_test). These
+        # always correspond to the exact model geometry used at training time,
+        # which matters for adapted models like biot (200Hz) or bendr (20ch)
+        # where a shared 16ch/256Hz val_dl would be mis-shaped.
+        cached = _load_cached_probs(results_root / name / "logs", val_true.size, test_true.size)
+        if cached is not None:
+            val_probs, test_probs = cached
+        else:
+            logger.info("  No cached probs for %s \u2014 running forward passes.", name)
+            val_probs = _predict(model, val_dl, device)
+            test_probs = _predict(model, test_dl, device)
         val_probs_all.append(val_probs)
         test_probs_all.append(test_probs)
 
@@ -121,7 +130,14 @@ def main() -> None:
     with open(out_dir / "ensemble_metrics.json", "w") as f:
         json.dump({**test_metrics, "threshold": best_t, "strategy": args.strategy,
                    "models": [m["name"] for m in models_info]}, f, indent=2)
-    logger.info("Saved to %s", out_dir / "ensemble_metrics.json")
+    # Dump soft probabilities so the meta-ensemble (src/models/meta_ensemble.py)
+    # can combine this family with the LSTM and Mamba families without
+    # re-running any model forward passes.
+    np.save(out_dir / "val_probs.npy", val_ensemble)
+    np.save(out_dir / "val_labels.npy", val_true)
+    np.save(out_dir / "test_probs.npy", test_ensemble)
+    np.save(out_dir / "test_labels.npy", test_true)
+    logger.info("Saved to %s (+val/test probs.npy)", out_dir / "ensemble_metrics.json")
 
 
 def _load_data(data_path: Path, batch_size: int):
@@ -154,18 +170,36 @@ def _discover_models(results_root: Path, channels: int, samples: int,
         if not ckpt.exists():
             continue
         try:
+            # Previous bug: torch.load(..., weights_only=True) on the unified
+            # checkpoint returned the full payload dict (not a state_dict),
+            # which failed load_state_dict with "Missing/Unexpected keys".
+            payload = torch.load(ckpt, map_location=device, weights_only=False)
+            model_config = payload.get("model_config", {})
+            # Prefer kwargs stored at train time so geometry matches exactly
+            # (especially for adapted models: bendr at 20ch, biot at 200Hz).
             model = create_hf_model(
-                model_name, in_channels=channels, num_classes=2,
-                n_times=samples, sfreq=256, dropout=0.0,
+                model_name,
+                in_channels=int(model_config.get("in_channels", channels)),
+                num_classes=int(model_config.get("num_classes", 2)),
+                n_times=int(model_config.get("n_times", samples)),
+                sfreq=int(model_config.get("sfreq", 256)),
+                dropout=float(model_config.get("dropout", 0.0)),
             )
-            model.load_state_dict(torch.load(ckpt, map_location=device, weights_only=True))
+            model.load_state_dict(payload["model_state_dict"])
             model.to(device).eval()
 
             # Try to read val AUROC from logs
             val_auroc = _read_best_val_auroc(results_root / model_name / "logs")
+            val_f1 = float(payload.get("val_metrics", {}).get("f1", 0.0))
 
-            models_info.append({"name": model_name, "model": model, "val_auroc": val_auroc})
-            logger.info("Loaded %s (val_auroc=%.4f)", model_name, val_auroc)
+            models_info.append({
+                "name": model_name,
+                "model": model,
+                "val_auroc": val_auroc,
+                "val_f1": val_f1,
+                "threshold": float(payload.get("optimal_threshold", 0.5)),
+            })
+            logger.info("Loaded %s (val_auroc=%.4f, val_f1=%.4f)", model_name, val_auroc, val_f1)
         except Exception as e:
             logger.warning("Skipping %s: %s", model_name, e)
     return models_info
@@ -188,6 +222,31 @@ def _read_best_val_auroc(logs_dir: Path) -> float:
             return best
     except Exception:
         return 0.5
+
+
+def _load_cached_probs(
+    logs_dir: Path, expected_val_n: int, expected_test_n: int,
+) -> Any | None:
+    """Return (val_probs, test_probs) from npy cache, else None.
+
+    Validates array sizes against the current val/test splits so a stale cache
+    (different split, older data tensors) falls back to live prediction rather
+    than silently misaligning the ensemble.
+    """
+    val_p = logs_dir / "val_probs.npy"
+    test_p = logs_dir / "test_probs.npy"
+    if not (val_p.exists() and test_p.exists()):
+        return None
+    v = np.load(val_p)
+    t = np.load(test_p)
+    if v.size != expected_val_n or t.size != expected_test_n:
+        logger.warning(
+            "Cached probs at %s have wrong size (val=%d/%d, test=%d/%d); "
+            "falling back to forward pass.",
+            logs_dir, v.size, expected_val_n, t.size, expected_test_n,
+        )
+        return None
+    return v, t
 
 
 def _predict(model: nn.Module, dataloader: DataLoader, device: torch.device) -> np.ndarray:
