@@ -42,24 +42,34 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train HF EEG models via cached dataloader.")
     parser.add_argument("--model", default="baseline_cnn_1d", choices=["all"] + list_hf_models())
     parser.add_argument("--run_name", default="", help="Optional suffix for results directory.")
-    parser.add_argument("--epochs", type=int, default=20)
+    # Defaults raised to match what actually converged well in the previous
+    # log analysis: 20 epochs + lr=1e-3 under-trained most HF models (val F1
+    # was still rising at early-stop). patience=7 cut runs short before the
+    # warmup-cosine cycle finished.
+    parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--patience", type=int, default=7)
+    parser.add_argument("--patience", type=int, default=12)
     parser.add_argument("--num_classes", type=int, default=2)
     parser.add_argument("--freeze_backbone", action="store_true")
     parser.add_argument("--train_augment", action="store_true")
     parser.add_argument("--loss", default="focal", choices=("ce", "focal"))
     parser.add_argument("--focal_gamma", type=float, default=2.0)
-    parser.add_argument("--focal_alpha", type=float, default=0.25)
+    # Raised from 0.25 — under-weighting positives hurt precision on the
+    # baseline CNN families (recall 0.98 / F1 0.48 ⇒ high FP rate).
+    parser.add_argument("--focal_alpha", type=float, default=0.35)
     parser.add_argument("--threshold_mode", default="tune", choices=("fixed", "tune"))
     parser.add_argument("--decision_threshold", type=float, default=0.35)
-    parser.add_argument("--smoothing_mode", default="none", choices=("none", "moving_average", "consecutive"))
+    parser.add_argument("--smoothing_mode", default="auto",
+                        choices=("auto", "none", "moving_average", "consecutive"),
+                        help="'auto' picks moving_average for models known to "
+                             "benefit from it (e.g. multiscale_attention_cnn), "
+                             "else 'none'. Explicit values override.")
     parser.add_argument("--smoothing_window", type=int, default=5)
     parser.add_argument("--min_positive_run", type=int, default=2)
     parser.add_argument("--grad_clip_norm", type=float, default=1.0)
@@ -75,6 +85,9 @@ def _train_single_model(args: argparse.Namespace) -> None:
     config_path = Path(args.config_path).resolve()
     results_root, ckpt_dir, logs_dir = _setup_dirs(args, config_path)
     train_dl, val_dl, test_dl, channels, samples, sfreq = _load_data(args, config_path)
+    # Resolve smoothing_mode="auto" before passing into training/eval so the
+    # test-time smoothing matches the threshold tuning done on val.
+    args.smoothing_mode = _resolve_smoothing_mode(args.model, args.smoothing_mode)
     model = _build_model(args, channels, samples, sfreq, device)
     criterion = _build_criterion(args)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -88,12 +101,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args()
     if args.model == "all":
+        # eegpt_pretrained needs 62 channels — architectural, can't resample.
+        # All others are now handled via runtime resample/pad in _load_data.
         incompatible_models = {
-            "bendr_pretrained": "requires 20 channels (CHB-MIT has 16)",
-            "biot_pretrained": "requires 200 Hz sampling (CHB-MIT is 256 Hz)",
-            "eegpt_pretrained": "requires 62 channels (CHB-MIT has 19)",
-            "hf_st_eegformer": "requires 128 Hz sampling (CHB-MIT is 256 Hz)",
-            "st_eegformer": "requires 128 Hz sampling (CHB-MIT is 256 Hz)"
+            "eegpt_pretrained": "requires 62 channels (CHB-MIT has 16); architecture assumption",
         }
         for model_name in list_hf_models():
             if model_name in incompatible_models:
@@ -119,6 +130,7 @@ def _training_loop(
 ) -> None:
     """Full training + validation loop with early stopping."""
     best_val_f1, best_epoch, no_improve = -1.0, 0, 0
+    best_threshold = args.decision_threshold
     history: list[dict[str, Any]] = []
     threshold = args.decision_threshold
     for epoch in range(1, args.epochs + 1):
@@ -142,6 +154,7 @@ def _training_loop(
         cur_f1 = val_m.get("f1", 0.0)
         if cur_f1 > best_val_f1:
             best_val_f1, best_epoch, no_improve = cur_f1, epoch, 0
+            best_threshold = float(threshold)
             model_config = {
                 "name": args.model,
                 "in_channels": int(getattr(args, "channels", 16)),
@@ -157,7 +170,7 @@ def _training_loop(
                 model_builder="src.models.hugging_face_mamba_moe.architectures.hf_factory.create_hf_model",
                 epoch=epoch,
                 val_metrics=val_m,
-                optimal_threshold=float(threshold),
+                optimal_threshold=best_threshold,
             )
         else:
             no_improve += 1
@@ -165,23 +178,44 @@ def _training_loop(
                 logger.info("Early stopping at epoch %d (patience=%d).", epoch, args.patience)
                 break
     _save_history(logs_dir / "history.csv", history)
-    _run_test(model, test_dl, criterion, device, threshold, args, ckpt_dir, logs_dir)
+    _run_test(model, val_dl, test_dl, criterion, device,
+              best_threshold, best_epoch, args, ckpt_dir, logs_dir)
 
 
 def _run_test(
-    model: nn.Module, test_dl, criterion: nn.Module, device: torch.device,
-    threshold: float, args: argparse.Namespace, ckpt_dir: Path, logs_dir: Path,
+    model: nn.Module, val_dl, test_dl, criterion: nn.Module, device: torch.device,
+    threshold: float, best_epoch: int, args: argparse.Namespace,
+    ckpt_dir: Path, logs_dir: Path,
 ) -> None:
-    """Load best checkpoint, evaluate, and rewrite it in the unified schema."""
+    """Load best checkpoint, evaluate, dump soft probs, rewrite unified schema.
+
+    Fixes two prior bugs:
+    * ``epoch`` in the final checkpoint was ``args.epochs`` (e.g. 40) rather
+      than the actual ``best_epoch`` at which the best val F1 occurred.
+    * Test ``threshold`` came from the *last* epoch's tuning, not the best
+      epoch's — those can drift apart by many points if val F1 is noisy.
+    The threshold stored in the best-checkpoint at save time is the source of
+    truth; we re-read it defensively in case the caller passes a stale value.
+    """
     best_ckpt = ckpt_dir / "best_model.pt"
     if best_ckpt.exists():
         ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
         model.load_state_dict(ckpt["model_state_dict"])
+        threshold = float(ckpt.get("optimal_threshold", threshold))
+        best_epoch = int(ckpt.get("epoch", best_epoch))
+    # Collect val + test soft probs for the family / meta ensemble (Phase 4).
+    val_probs, val_labels = _collect_probs(model, val_dl, device)
+    test_probs, test_labels = _collect_probs(model, test_dl, device)
+    np.save(logs_dir / "val_probs.npy", val_probs)
+    np.save(logs_dir / "val_labels.npy", val_labels)
+    np.save(logs_dir / "test_probs.npy", test_probs)
+    np.save(logs_dir / "test_labels.npy", test_labels)
+
     test_m = _run_epoch(model, test_dl, criterion, device, optimizer=None,
                         threshold=threshold, smoothing_mode=args.smoothing_mode,
                         smoothing_window=args.smoothing_window, min_positive_run=args.min_positive_run,
                         split_name="test")
-    logger.info("Test results: %s", test_m)
+    logger.info("Test results (threshold=%.3f, best_epoch=%d): %s", threshold, best_epoch, test_m)
     _save_json(logs_dir / "test_metrics.json", test_m)
     # Rewrite best_model.pt with the unified checkpoint schema so downstream
     # code (inference, ensembles, apps) can load it via utils.checkpoint.load_checkpoint.
@@ -208,10 +242,45 @@ def _run_test(
         model_config=model_config,
         model_builder="src.models.hugging_face_mamba_moe.architectures.hf_factory.create_hf_model",
         optimizer=None,
-        epoch=int(args.epochs),
+        epoch=int(best_epoch),
         val_metrics=val_metrics,
         optimal_threshold=float(threshold),
     )
+
+
+def _collect_probs(
+    model: nn.Module, dataloader, device: torch.device,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (positive-class probs, labels) as flat 1-D arrays.
+
+    Shared with the meta-ensemble: each HF model dumps its val/test probs so
+    the downstream ensemble is a pure numpy combine — no model rebuild needed.
+    """
+    model.eval()
+    probs_all, labels_all = [], []
+    with torch.no_grad():
+        for x, y in dataloader:
+            x = x.to(device, non_blocking=True)
+            logits = model(x)
+            probs = torch.softmax(logits, dim=1)[:, 1].detach().cpu().numpy()
+            probs_all.append(np.atleast_1d(probs))
+            labels_all.append(np.atleast_1d(y.cpu().numpy()))
+    return np.concatenate(probs_all), np.concatenate(labels_all)
+
+
+# Models that need prediction smoothing: threshold tuned on jittery 1-second
+# windows doesn't transfer to test unless we smooth the probability stream.
+# Keyed at module scope so `_resolve_smoothing_mode` stays a lookup.
+_SMOOTHING_AUTO_MAP: dict[str, str] = {
+    "multiscale_attention_cnn": "moving_average",
+}
+
+
+def _resolve_smoothing_mode(model_name: str, requested: str) -> str:
+    """Translate 'auto' into the per-model default; pass through otherwise."""
+    if requested != "auto":
+        return requested
+    return _SMOOTHING_AUTO_MAP.get(model_name, "none")
 
 
 def _run_epoch(
@@ -315,6 +384,18 @@ def _consecutive_smooth(y_pred: np.ndarray, min_run: int) -> np.ndarray:
     return result
 
 
+# Per-model input adapters — when a model expects a different sample-rate or
+# channel count than CHB-MIT provides (16ch / 256Hz), we resample and/or
+# zero-pad the tensors on load. Previously these models were hard-skipped
+# from the 'all' run, which cost us 4 ensemble members.
+_HF_INPUT_OVERRIDES: dict[str, dict[str, int]] = {
+    "biot_pretrained":    {"target_sfreq": 200, "target_channels": 16},
+    "st_eegformer":       {"target_sfreq": 128, "target_channels": 16},
+    "hf_st_eegformer":    {"target_sfreq": 128, "target_channels": 16},
+    "bendr_pretrained":   {"target_sfreq": 256, "target_channels": 20},
+}
+
+
 def _load_data(args: argparse.Namespace, config_path: Path):
     """Load dataloaders; return (train, val, test, channels, samples, sfreq)."""
     with open(config_path) as f:
@@ -323,9 +404,15 @@ def _load_data(args: argparse.Namespace, config_path: Path):
     sfreq = int(cfg.get("signal", {}).get("target_sfreq", 256))
     samples = int(cfg.get("windowing", {}).get("window_sec", 1.0) * sfreq)
 
+    overrides = _HF_INPUT_OVERRIDES.get(args.model, {})
+    target_sfreq = overrides.get("target_sfreq", sfreq)
+    target_channels = overrides.get("target_channels", channels)
+
     if args.data_path:
         train_dl, val_dl, test_dl = _load_from_tensors(
             Path(args.data_path), args.batch_size,
+            source_sfreq=sfreq, target_sfreq=target_sfreq,
+            source_channels=channels, target_channels=target_channels,
         )
     else:
         from src.data_loader.load_cache import get_dataloaders
@@ -333,17 +420,44 @@ def _load_data(args: argparse.Namespace, config_path: Path):
             batch_size=args.batch_size, num_workers=args.num_workers,
             augment_train=args.train_augment,
         )
-    return train_dl, val_dl, test_dl, channels, samples, sfreq
+        if target_sfreq != sfreq or target_channels != channels:
+            logger.warning(
+                "Cache loader doesn't support runtime resample/pad; model %s "
+                "requires (%d ch, %d Hz) but cache is (%d ch, %d Hz). "
+                "Pass --data_path with tensor splits to enable adaptation.",
+                args.model, target_channels, target_sfreq, channels, sfreq,
+            )
+    # Report the *effective* geometry the model sees (not the source cache's).
+    eff_samples = int(samples * target_sfreq / sfreq) if target_sfreq != sfreq else samples
+    return train_dl, val_dl, test_dl, target_channels, eff_samples, target_sfreq
 
 
-def _load_from_tensors(data_path: Path, batch_size: int):
-    """Load pre-processed .pt tensor splits — same format as benchmark models."""
+def _load_from_tensors(
+    data_path: Path, batch_size: int,
+    source_sfreq: int = 256, target_sfreq: int = 256,
+    source_channels: int = 16, target_channels: int = 16,
+):
+    """Load pre-processed .pt tensor splits; optionally resample/pad channels.
+
+    Args:
+        source_sfreq / target_sfreq: If differ, each window is linearly
+            interpolated along the time axis. Linear is good enough for EEG at
+            these ratios (256→200 / 256→128) and avoids torchaudio deps.
+        source_channels / target_channels: If ``target > source`` we zero-pad
+            extra channels. If ``target < source`` we keep the first N. The
+            padded-channel case is used for ``bendr_pretrained`` (20ch model,
+            16ch data).
+    """
     from torch.utils.data import DataLoader, TensorDataset
     pin = torch.cuda.is_available()
 
     def _split(name: str):
         d = torch.load(data_path / name / "data.pt", weights_only=True).float()
         l = torch.load(data_path / name / "labels.pt", weights_only=True).long().squeeze()
+        if target_sfreq != source_sfreq:
+            d = _resample_time(d, source_sfreq, target_sfreq)
+        if target_channels != source_channels:
+            d = _adapt_channels(d, source_channels, target_channels)
         return TensorDataset(d, l)
 
     return (
@@ -351,6 +465,36 @@ def _load_from_tensors(data_path: Path, batch_size: int):
         DataLoader(_split("val"), batch_size=batch_size, shuffle=False, pin_memory=pin),
         DataLoader(_split("test"), batch_size=batch_size, shuffle=False, pin_memory=pin),
     )
+
+
+def _resample_time(data: torch.Tensor, src_hz: int, tgt_hz: int) -> torch.Tensor:
+    """Linearly interpolate along the last (time) axis to ``tgt_hz``.
+
+    Assumes shape ``(N, C, T)``. Uses F.interpolate which is deterministic,
+    vectorised, and sufficient for the modest 256→128 / 256→200 conversions
+    needed by the pretrained HF backbones.
+    """
+    if data.ndim != 3:
+        raise ValueError(f"_resample_time expects (N,C,T); got {tuple(data.shape)}")
+    new_t = int(round(data.shape[-1] * tgt_hz / src_hz))
+    return F.interpolate(data, size=new_t, mode="linear", align_corners=False)
+
+
+def _adapt_channels(data: torch.Tensor, src_c: int, tgt_c: int) -> torch.Tensor:
+    """Zero-pad extra channels (up-adaptation) or truncate (down-adaptation).
+
+    Up-adaptation is an approximation: the BENDR encoder was trained on 20
+    canonical 10-20 channels; we append zero-channels to the 16 available and
+    let the model fine-tune on top. Documented in the README.
+    """
+    if data.ndim != 3:
+        raise ValueError(f"_adapt_channels expects (N,C,T); got {tuple(data.shape)}")
+    if tgt_c < src_c:
+        return data[:, :tgt_c, :]
+    if tgt_c > src_c:
+        pad_shape = (data.shape[0], tgt_c - src_c, data.shape[2])
+        return torch.cat([data, torch.zeros(pad_shape, dtype=data.dtype)], dim=1)
+    return data
 
 
 def _build_model(args: argparse.Namespace, channels: int, samples: int, sfreq: int,

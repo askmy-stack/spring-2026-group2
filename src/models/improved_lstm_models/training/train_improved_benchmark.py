@@ -91,6 +91,19 @@ def main() -> None:
     logger.info("Training on device=%s; models=%s", device, selected)
 
     data, labels, subjects = load_train_tensors(args.data_path)
+    if subjects is None:
+        # Prominent banner: without subject_ids.pt the aux_f1 metrics reported
+        # per-fold are window-wise (adjacent 1-second windows from the same
+        # recording end up in both train and aux-val) and will be optimistic
+        # by ~0.4 F1 vs a real subject-wise holdout. The final test metric
+        # (fixed test split) is unaffected, but per-fold logs should be read
+        # as "training-signal" only, not generalisation.
+        logger.warning("=" * 72)
+        logger.warning("subject_ids.pt not found under %s/train/", args.data_path)
+        logger.warning("Falling back to stratified WINDOW-wise K-fold.")
+        logger.warning("Per-fold aux_f1 metrics will be optimistic (data leakage).")
+        logger.warning("Regenerate tensors with per-window subject ids for honest CV.")
+        logger.warning("=" * 72)
     val_loader, test_loader = _build_val_test_loaders(args.data_path, config)
 
     for model_name in selected:

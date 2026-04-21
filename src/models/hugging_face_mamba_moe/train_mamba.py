@@ -9,9 +9,11 @@ Usage:
 """
 import argparse
 import logging
+import math
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -23,6 +25,7 @@ from src.models.lstm_benchmark_models.train_baseline import (
 )
 from src.models.utils.metrics import (
     compute_f1_score, compute_auc_roc, compute_sensitivity,
+    compute_specificity, find_optimal_threshold,
 )
 from src.models.utils.config_validator import validate_config
 from .architectures.eeg_mamba import EEGMamba, EEGMambaMoE
@@ -62,9 +65,10 @@ def train_mamba(model_name: str, data_path: Path, config: Dict) -> Dict:
         lr=config["training"]["learning_rate"],
         weight_decay=config["training"]["weight_decay"],
     )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=config["training"]["num_epochs"]
-    )
+    # Warmup+Cosine: linearly ramp up for ``warmup_epochs`` then cosine-decay.
+    # Mamba-MoE is unstable at full LR from step 0 — caused NaN divergence in
+    # earlier runs. Warmup avoids that without hurting non-MoE training.
+    scheduler = _build_warmup_cosine_scheduler(optimizer, config)
     ckpt_dir = Path(config["outputs"]["checkpoint_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     # Build model_config for checkpoint schema
@@ -92,7 +96,13 @@ def train_mamba(model_name: str, data_path: Path, config: Dict) -> Dict:
         preprocess=config.get("preprocess", {}),
     )
     _run_training_loop(model, model_name, train_loader, val_loader, criterion, optimizer, scheduler, stopper, config, device)
-    return _evaluate_mamba(model, model_name, test_loader, device)
+    # Reload best checkpoint (EarlyStopping saves on val-loss improvement)
+    _maybe_reload_best(model, stopper.checkpoint_path, device)
+    # Tune threshold on val, apply to test. Previously we hardcoded 0.5 which
+    # cost ~20 F1 points on eeg_mamba (AUC 0.71 → F1 0.34).
+    threshold = _tune_threshold_on_val(model, model_name, val_loader, device)
+    logger.info("Tuned threshold on val set: %.3f", threshold)
+    return _evaluate_mamba(model, model_name, test_loader, device, threshold=threshold)
 
 
 def _run_training_loop(
@@ -107,7 +117,22 @@ def _run_training_loop(
     moe_weight = config["models"]["hugging_face_mamba_moe"].get("moe_loss_weight", 0.01)
     for epoch in range(num_epochs):
         train_loss = _train_one_epoch(model, train_loader, criterion, optimizer, config, device, is_moe, moe_weight)
+        # NaN guard: if train loss diverges we must not keep looping — the
+        # optimiser will keep writing NaN weights into the checkpoint. Abort
+        # cleanly; the previously-saved best checkpoint (if any) is kept.
+        if not math.isfinite(train_loss):
+            logger.error(
+                "Non-finite train loss at epoch %d (train_loss=%s) — aborting run.",
+                epoch + 1, train_loss,
+            )
+            break
         val_loss = _validate_one_epoch(model, val_loader, criterion, device, is_moe)
+        if not math.isfinite(val_loss):
+            logger.error(
+                "Non-finite val loss at epoch %d (val_loss=%s) — aborting run.",
+                epoch + 1, val_loss,
+            )
+            break
         scheduler.step()
         stopper.step(epoch, val_loss, model, val_metrics={"val_loss": val_loss})
         logger.info("Epoch %d/%d — train=%.4f val=%.4f", epoch + 1, num_epochs, train_loss, val_loss)
@@ -185,37 +210,92 @@ def _build_model(model_name: str, config: Dict) -> nn.Module:
     return MODEL_REGISTRY[model_name](**common_kwargs)
 
 
-def _evaluate_mamba(
-    model: nn.Module, model_name: str, test_loader: DataLoader, device: torch.device,
-    threshold: float = 0.5,
-) -> Dict:
-    """Run inference on test split; unpack (logits, lb_loss) for MoE models.
+def _collect_probs(
+    model: nn.Module, model_name: str, loader: DataLoader, device: torch.device,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Run inference and return (y_score, y_true) as flat 1-D numpy arrays.
 
-    The LSTM-benchmark ``_evaluate_on_test`` helper assumes ``model(x)`` returns
-    a tensor, which breaks on ``eeg_mamba_moe`` whose forward returns a tuple.
-    We reimplement it here with the same metric shape so downstream code
-    (and the return contract of :func:`train_mamba`) is unchanged.
+    Unpacks ``(logits, lb_loss)`` for ``eeg_mamba_moe``; for plain ``eeg_mamba``
+    it treats the output as a tensor. Used by both threshold tuning (on val)
+    and final evaluation (on test).
     """
-    import numpy as np
     is_moe = model_name == "eeg_mamba_moe"
     model.eval()
     probs_all, labels_all = [], []
     with torch.no_grad():
-        for eeg_batch, label_batch in test_loader:
+        for eeg_batch, label_batch in loader:
             eeg_batch = eeg_batch.to(device)
             out = model(eeg_batch)
             logits = out[0] if is_moe else out
             probs = torch.sigmoid(logits.squeeze(-1)).detach().cpu().numpy()
             probs_all.append(np.atleast_1d(probs))
             labels_all.append(np.atleast_1d(label_batch.numpy()))
-    y_score = np.concatenate(probs_all)
-    y_true = np.concatenate(labels_all)
+    return np.concatenate(probs_all), np.concatenate(labels_all)
+
+
+def _tune_threshold_on_val(
+    model: nn.Module, model_name: str, val_loader: DataLoader, device: torch.device,
+) -> float:
+    """Grid-search threshold in [0.05, 0.95] maximising F1 on val probs.
+
+    Calibrates the decision boundary *before* test evaluation. Previously the
+    evaluator hardcoded 0.5 which kept eeg_mamba's F1 far below what the AUC
+    of 0.71 implied was achievable.
+    """
+    y_score, y_true = _collect_probs(model, model_name, val_loader, device)
+    return float(find_optimal_threshold(y_true, y_score))
+
+
+def _evaluate_mamba(
+    model: nn.Module, model_name: str, test_loader: DataLoader, device: torch.device,
+    threshold: float = 0.5,
+) -> Dict:
+    """Run inference on test split; unpack (logits, lb_loss) for MoE models.
+
+    ``threshold`` should be tuned on the val split (see
+    :func:`_tune_threshold_on_val`). A hardcoded 0.5 is only correct for
+    perfectly-calibrated logits, which Mamba is not.
+    """
+    y_score, y_true = _collect_probs(model, model_name, test_loader, device)
     y_pred = (y_score >= threshold).astype(int)
     return {
         "f1": compute_f1_score(y_true, y_pred),
         "auc_roc": compute_auc_roc(y_true, y_score),
         "sensitivity": compute_sensitivity(y_true, y_pred),
+        "specificity": compute_specificity(y_true, y_pred),
+        "threshold": float(threshold),
     }
+
+
+def _maybe_reload_best(
+    model: nn.Module, checkpoint_path, device: torch.device,
+) -> None:
+    """Reload best-val-loss weights before final evaluation, if available."""
+    if checkpoint_path is None or not Path(checkpoint_path).exists():
+        logger.warning("No best checkpoint found at %s; evaluating current weights.", checkpoint_path)
+        return
+    payload = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    model.load_state_dict(payload["model_state_dict"])
+    logger.info("Reloaded best checkpoint from %s (epoch=%s)", checkpoint_path, payload.get("epoch"))
+
+
+def _build_warmup_cosine_scheduler(
+    optimizer: torch.optim.Optimizer, config: Dict,
+) -> torch.optim.lr_scheduler.LambdaLR:
+    """Linear warmup over ``warmup_epochs``, then cosine decay to 0.
+
+    Kept as an inline LambdaLR to avoid importing a heavier scheduler class.
+    """
+    total = int(config["training"]["num_epochs"])
+    warmup = int(config["training"].get("warmup_epochs", 0))
+
+    def lr_lambda(epoch: int) -> float:
+        if warmup > 0 and epoch < warmup:
+            return (epoch + 1) / warmup
+        progress = (epoch - warmup) / max(total - warmup, 1)
+        return 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
+
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
 
 
 def _build_criterion(config: Dict, device: torch.device) -> nn.Module:
