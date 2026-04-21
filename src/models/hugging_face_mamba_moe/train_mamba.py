@@ -19,7 +19,10 @@ from torch.utils.data import DataLoader
 from src.models.utils.losses import FocalLoss
 from src.models.utils.callbacks import EarlyStopping, clip_gradients
 from src.models.lstm_benchmark_models.train_baseline import (
-    load_config, _get_device, _build_data_loaders, _evaluate_on_test
+    load_config, _get_device, _build_data_loaders,
+)
+from src.models.utils.metrics import (
+    compute_f1_score, compute_auc_roc, compute_sensitivity,
 )
 from src.models.utils.config_validator import validate_config
 from .architectures.eeg_mamba import EEGMamba, EEGMambaMoE
@@ -89,7 +92,7 @@ def train_mamba(model_name: str, data_path: Path, config: Dict) -> Dict:
         preprocess=config.get("preprocess", {}),
     )
     _run_training_loop(model, model_name, train_loader, val_loader, criterion, optimizer, scheduler, stopper, config, device)
-    return _evaluate_on_test(model, test_loader, device)
+    return _evaluate_mamba(model, model_name, test_loader, device)
 
 
 def _run_training_loop(
@@ -180,6 +183,39 @@ def _build_model(model_name: str, config: Dict) -> nn.Module:
         common_kwargs["num_experts"] = cfg.get("num_experts", 8)
         common_kwargs["top_k"] = cfg.get("top_k", 2)
     return MODEL_REGISTRY[model_name](**common_kwargs)
+
+
+def _evaluate_mamba(
+    model: nn.Module, model_name: str, test_loader: DataLoader, device: torch.device,
+    threshold: float = 0.5,
+) -> Dict:
+    """Run inference on test split; unpack (logits, lb_loss) for MoE models.
+
+    The LSTM-benchmark ``_evaluate_on_test`` helper assumes ``model(x)`` returns
+    a tensor, which breaks on ``eeg_mamba_moe`` whose forward returns a tuple.
+    We reimplement it here with the same metric shape so downstream code
+    (and the return contract of :func:`train_mamba`) is unchanged.
+    """
+    import numpy as np
+    is_moe = model_name == "eeg_mamba_moe"
+    model.eval()
+    probs_all, labels_all = [], []
+    with torch.no_grad():
+        for eeg_batch, label_batch in test_loader:
+            eeg_batch = eeg_batch.to(device)
+            out = model(eeg_batch)
+            logits = out[0] if is_moe else out
+            probs = torch.sigmoid(logits.squeeze(-1)).detach().cpu().numpy()
+            probs_all.append(np.atleast_1d(probs))
+            labels_all.append(np.atleast_1d(label_batch.numpy()))
+    y_score = np.concatenate(probs_all)
+    y_true = np.concatenate(labels_all)
+    y_pred = (y_score >= threshold).astype(int)
+    return {
+        "f1": compute_f1_score(y_true, y_pred),
+        "auc_roc": compute_auc_roc(y_true, y_score),
+        "sensitivity": compute_sensitivity(y_true, y_pred),
+    }
 
 
 def _build_criterion(config: Dict, device: torch.device) -> nn.Module:
