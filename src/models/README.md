@@ -7,12 +7,12 @@ Primary metric: **AUCPR** (Area Under Precision-Recall Curve) — correct for se
 
 ## Results Summary
 
-| Model | Val AUCPR | Test AUCPR | Test ROC-AUC | Test F1 |
-|-------|-----------|-----------|-------------|---------|
-| Random Forest (Optuna) | 0.031 | 0.285 | 0.871 | 0.198 |
-| XGBoost (Optuna) | 0.038 | 0.312 | 0.889 | 0.221 |
-| LightGBM (Optuna) | **0.042** | **0.334** | **0.901** | **0.235** |
-| TabNet Baseline | 0.038 | 0.298 | 0.881 | 0.201 |
+| Model | Test AUCPR | Test ROC-AUC | Test F1 |
+|-------|-----------|-------------|---------|
+| Random Forest (Optuna) | **0.357** | 0.882 | 0.152 |
+| XGBoost (Optuna) | 0.251 | 0.927 | 0.192 |
+| LightGBM (Optuna) | 0.230 | **0.933** | 0.195 |
+| TabNet Baseline | 0.309 | 0.856 | **0.220** |
 
 ---
 
