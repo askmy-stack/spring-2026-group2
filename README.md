@@ -7,18 +7,17 @@ Spring 2026 | GWU Research Group 2
 
 ## Overview
 
-End-to-end pipeline for automated seizure detection from scalp EEG recordings. We compare classical ML, attention-based tabular models, and a hybrid deep learning architecture on the CHB-MIT Scalp EEG dataset.
+End-to-end pipeline for automated seizure detection from scalp EEG recordings. We compare classical ML and attention-based tabular models on the CHB-MIT Scalp EEG dataset.
 
 **Key results (subject-independent evaluation):**
 
 | Model | Test AUCPR | Test ROC-AUC | Test F1 |
 |-------|-----------|-------------|---------|
-| LightGBM (Optuna) | **0.334** | 0.901 | 0.235 |
-| H-TabNet | 0.331 | **0.907** | **0.247** |
+| LightGBM (Optuna) | **0.334** | **0.901** | **0.235** |
 | XGBoost (Optuna) | 0.312 | 0.889 | 0.221 |
 | TabNet Optuna | 0.318 | 0.893 | 0.218 |
-| Random Forest | 0.285 | 0.871 | 0.198 |
-| Hybrid TCN+Transformer+BiLSTM | 0.035 | — | — |
+| TabNet Baseline | 0.298 | 0.881 | 0.201 |
+| Random Forest (Optuna) | 0.285 | 0.871 | 0.198 |
 
 > Primary metric: **AUCPR** — correct metric for severe class imbalance (0.3% seizure rate)
 
@@ -35,8 +34,8 @@ End-to-end pipeline for automated seizure detection from scalp EEG recordings. W
 
 **Subject-independent split:**
 - Train: chb02, 04, 06, 08, 09, 10, 11, 12, 13, 14, 15, 17, 19, 20, 22, 24 (16 subjects)
-- Val: chb01, 03, 16, 18 (4 subjects)
-- Test: chb05, 07, 21, 23 (4 subjects)
+- Val: chb01, chb03, chb16, chb18 (4 subjects)
+- Test: chb05, chb07, chb21, chb23 (4 subjects)
 
 ---
 
@@ -51,8 +50,6 @@ eeg/
 │   │   ├── baseline_xgboost.yaml
 │   │   ├── baseline_random_forest.yaml
 │   │   ├── tabnet_baseline.yaml
-│   │   ├── tabnet_ect.yaml
-│   │   ├── tabnet_hier.yaml
 │   │   └── tabnet_optuna.yaml
 │   ├── feature_engineering/
 │   │   ├── extractor.py           # AdvancedFeatureExtractor (528 features)
@@ -60,13 +57,12 @@ eeg/
 │   ├── models/
 │   │   ├── baseline/
 │   │   │   ├── train_model.py         # LightGBM / XGBoost / RF training
+│   │   │   └── train_tabnet.py        # TabNet baseline
+│   │   ├── improved/
 │   │   │   ├── optuna_lightgbm.py     # Optuna-tuned LightGBM
 │   │   │   ├── optuna_xgboost.py      # Optuna-tuned XGBoost
 │   │   │   ├── optuna_random_forest.py
-│   │   │   ├── train_tabnet.py        # TabNet baseline
 │   │   │   └── optuna_tabnet.py       # Optuna-tuned TabNet
-│   │   ├── improved/
-│   │   │   └── train_tabnet_advanced.py  # ECT-TabNet / H-TabNet
 │   │   └── utils/
 │   │       ├── config_utils.py        # Portable path resolution
 │   │       ├── data_utils.py          # load_split, validate_feature_columns
@@ -76,7 +72,7 @@ eeg/
 │   │       └── prepare_memmap.py      # CSV → memory-mapped arrays for TabNet
 │   └── dataloaders/                   # EDF windowing & tensor cache
 ├── requirements.txt
-├── check_setup.py                 # Structural verification (14 checks)
+├── check_setup.py                 # Structural verification
 └── stress_test.py                 # Runtime verification (19 checks)
 ```
 
@@ -95,8 +91,8 @@ pip install -r requirements.txt
 ### 2. Verify setup
 
 ```bash
-python check_setup.py    # 14 structural checks
-python stress_test.py    # 19 runtime checks (uses synthetic data)
+python check_setup.py    # structural checks
+python stress_test.py    # runtime checks (uses synthetic data)
 ```
 
 ### 3. Feature extraction
@@ -123,15 +119,15 @@ Output: `results/features_raw/features_{train,val,test}.csv`
 
 ```bash
 # LightGBM with Optuna tuning (50 trials)
-python -m src.models.baseline.optuna_lightgbm \
+python -m src.models.improved.optuna_lightgbm \
     --config src/config/baseline_lightgbm.yaml
 
 # XGBoost
-python -m src.models.baseline.optuna_xgboost \
+python -m src.models.improved.optuna_xgboost \
     --config src/config/baseline_xgboost.yaml
 
 # Random Forest
-python -m src.models.baseline.optuna_random_forest \
+python -m src.models.improved.optuna_random_forest \
     --config src/config/baseline_random_forest.yaml
 ```
 
@@ -146,42 +142,26 @@ python -m src.models.utils.prepare_memmap \
 python -m src.models.baseline.train_tabnet \
     --config src/config/tabnet_baseline.yaml
 
-# ECT-TabNet (Channel Transformer)
-python -m src.models.improved.train_tabnet_advanced \
-    --config src/config/tabnet_ect.yaml
-
-# H-TabNet (Hierarchical encoder) — best overall
-python -m src.models.improved.train_tabnet_advanced \
-    --config src/config/tabnet_hier.yaml
+# Optuna-tuned TabNet
+python -m src.models.improved.optuna_tabnet \
+    --config src/config/tabnet_optuna.yaml
 ```
 
 ---
 
 ## Features
 
-**528 features per 1-second window:**
+**528 features per 1-second window (33 per channel × 16 channels):**
 
 | Category | Features | Count |
 |----------|---------|-------|
-| Time-domain | Mean, variance, skewness, kurtosis, ZCR, line length, Hjorth parameters | 11 × 16 ch = 176 |
-| Frequency-domain | Delta/Theta/Alpha/Beta/Gamma power, spectral entropy, peak frequency | 12 × 16 ch = 192 |
-| Cross-channel | Correlation matrix, coherence, spatial synchrony | 10 × 16 ch = 160 |
-
----
-
-## Model Architectures
-
-### H-TabNet (Best ROC-AUC & F1)
-Hierarchical channel encoder: shared per-channel encoder → Squeeze-Excitation attention → TabNet sequential attention.
-
-### ECT-TabNet
-16 EEG channels treated as tokens → multi-head self-attention (4 heads) → TabNet.
-
-### Hybrid Deep Learning (TCN + Transformer + BiLSTM)
-Three parallel encoders on raw EEG tensors (16 × 256):
-- TCN: 5 dilated conv blocks (dilations 1→16), receptive field = 256 samples
-- Channel Transformer: 2-layer self-attention across channels
-- BiLSTM: bidirectional sequence model over 256 timesteps
+| Time-domain | Mean, std, RMS, min, max, range, line length, ZCR, skewness, kurtosis | 10 × 16 ch = 160 |
+| Hjorth parameters | Activity, mobility, complexity | 3 × 16 ch = 48 |
+| Nonlinear | Sample entropy, permutation entropy | 2 × 16 ch = 32 |
+| Frequency-domain | Band power (δ θ α β γ), relative power (×5), total power, spectral entropy | 12 × 16 ch = 192 |
+| FFT | Dominant frequency | 1 × 16 ch = 16 |
+| Wavelet | Approx energy, detail energy D1/D2/D3, wavelet entropy | 5 × 16 ch = 80 |
+| **Total** | | **528** |
 
 ---
 

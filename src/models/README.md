@@ -11,11 +11,9 @@ Primary metric: **AUCPR** (Area Under Precision-Recall Curve) — correct for se
 |-------|-----------|-----------|-------------|---------|
 | Random Forest (Optuna) | 0.031 | 0.285 | 0.871 | 0.198 |
 | XGBoost (Optuna) | 0.038 | 0.312 | 0.889 | 0.221 |
-| LightGBM (Optuna) | **0.042** | **0.334** | 0.901 | 0.235 |
+| LightGBM (Optuna) | **0.042** | **0.334** | **0.901** | **0.235** |
 | TabNet Baseline | 0.038 | 0.298 | 0.881 | 0.201 |
 | TabNet Optuna | 0.041 | 0.318 | 0.893 | 0.218 |
-| ECT-TabNet | 0.035 | 0.305 | 0.889 | 0.214 |
-| H-TabNet | 0.044 | 0.331 | **0.907** | **0.247** |
 
 ---
 
@@ -25,13 +23,12 @@ Primary metric: **AUCPR** (Area Under Precision-Recall Curve) — correct for se
 src/models/
 ├── baseline/
 │   ├── train_model.py          # LightGBM / XGBoost / RF — single training run
+│   └── train_tabnet.py         # TabNet baseline training
+├── improved/
 │   ├── optuna_lightgbm.py      # LightGBM with Optuna Bayesian tuning
 │   ├── optuna_xgboost.py       # XGBoost with Optuna Bayesian tuning
 │   ├── optuna_random_forest.py # Random Forest with Optuna Bayesian tuning
-│   ├── train_tabnet.py         # TabNet baseline training
 │   └── optuna_tabnet.py        # TabNet with Optuna tuning
-├── improved/
-│   └── train_tabnet_advanced.py  # ECT-TabNet and H-TabNet
 └── utils/
     ├── config_utils.py         # YAML loader with portable path resolution
     ├── data_utils.py           # load_split, validate_feature_columns
@@ -80,15 +77,15 @@ python -m src.models.baseline.train_model \
 
 ```bash
 # LightGBM — 50 Optuna trials, maximizes val AUCPR
-python -m src.models.baseline.optuna_lightgbm \
+python -m src.models.improved.optuna_lightgbm \
     --config src/config/baseline_lightgbm.yaml
 
 # XGBoost
-python -m src.models.baseline.optuna_xgboost \
+python -m src.models.improved.optuna_xgboost \
     --config src/config/baseline_xgboost.yaml
 
 # Random Forest
-python -m src.models.baseline.optuna_random_forest \
+python -m src.models.improved.optuna_random_forest \
     --config src/config/baseline_random_forest.yaml
 ```
 
@@ -138,34 +135,9 @@ python -m src.models.baseline.train_tabnet \
     --config src/config/tabnet_baseline.yaml
 
 # Optuna-tuned TabNet
-python -m src.models.baseline.optuna_tabnet \
+python -m src.models.improved.optuna_tabnet \
     --config src/config/tabnet_optuna.yaml
 ```
-
----
-
-## Advanced TabNet Models (ECT-TabNet & H-TabNet)
-
-Both variants extend TabNet with EEG-specific channel encoding layers.
-
-```bash
-# ECT-TabNet — Channel Transformer pre-layer
-python -m src.models.improved.train_tabnet_advanced \
-    --config src/config/tabnet_ect.yaml
-
-# H-TabNet — Hierarchical channel encoder (best ROC-AUC & F1)
-python -m src.models.improved.train_tabnet_advanced \
-    --config src/config/tabnet_hier.yaml
-```
-
-### ECT-TabNet Architecture
-16 EEG channels treated as tokens → Multi-head self-attention (4 heads) with positional encoding → learns which channels are most active during seizure → TabNet sequential attention on the encoded features.
-
-### H-TabNet Architecture
-Shared per-channel encoder processes each of 16 channels independently → Squeeze-Excitation (SE) attention re-weights channels by importance → concatenated representation → TabNet sequential attention.
-
-**Why H-TabNet wins on ROC-AUC and F1:**  
-Hierarchical encoding captures spatial EEG topology — adjacent channels tend to show correlated seizure activity that SE attention learns to exploit before TabNet processes features.
 
 ---
 
@@ -214,7 +186,7 @@ python -m src.models.utils.prepare_memmap \
 All configs live in `src/config/`. Key sections:
 
 ```yaml
-model_type: lightgbm          # lightgbm | xgboost | random_forest | tabnet | tabnet_advanced
+model_type: lightgbm          # lightgbm | xgboost | random_forest | tabnet
 
 paths:
   train_csv:  ../../results/features_raw/features_train.csv
@@ -238,7 +210,7 @@ optuna:
 ## Running in Background (HPC / AWS)
 
 ```bash
-nohup python -m src.models.baseline.optuna_lightgbm \
+nohup python -m src.models.improved.optuna_lightgbm \
     --config src/config/baseline_lightgbm.yaml \
     > results/logs/lgbm.log 2>&1 &
 
