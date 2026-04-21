@@ -2,7 +2,7 @@
 
 Window-level feature extraction module for EEG seizure detection research.
 
-This module converts pre-generated window index CSV files into structured feature matrices suitable for classical ML models (XGBoost, Random Forest, SVM, etc.).
+This module converts pre-generated window index CSV files into structured feature matrices suitable for classical ML models (LightGBM, XGBoost, Random Forest) and TabNet variants.
 
 Each output CSV row represents one EEG window and contains:
 
@@ -13,28 +13,42 @@ Each output CSV row represents one EEG window and contains:
 
 ---
 
-# Entry Point
+## Entry Point
+
+Run from the **project root**:
 
 ```bash
-python run_features_from_index.py --config configs/fe.yaml
+# Train split
+python -m src.feature_engineering.run_features_from_index \
+    --config src/config/feature_engineering.yaml \
+    --split train --n-jobs 4
+
+# Val split
+python -m src.feature_engineering.run_features_from_index \
+    --config src/config/feature_engineering.yaml \
+    --split val --n-jobs 2
+
+# Test split
+python -m src.feature_engineering.run_features_from_index \
+    --config src/config/feature_engineering.yaml \
+    --split test --n-jobs 2
 ```
 
-Optional:
-
-```bash
-python run_features_from_index.py --config configs/fe.yaml --split train
-```
+Optional flags:
+- `--n-jobs` — parallel workers (default: 2)
+- `--chunk-size` — rows per checkpoint file (default: 20000)
+- `--merge-only` — skip extraction, just merge existing chunks
 
 ---
 
-# Pipeline Overview
+## Pipeline Overview
 
-This module assumes the **Data Pipeline** has already generated window index CSV files.
+This module assumes the **data loader** has already generated window index CSV files.
 
-Example structure:
+Expected structure:
 
 ```
-results/dataloader/chbmit/
+results/dataloader/
 ├── window_index_train.csv
 ├── window_index_val.csv
 └── window_index_test.csv
@@ -43,42 +57,16 @@ results/dataloader/chbmit/
 The feature extraction workflow:
 
 1. Load window index CSV
-2. Load corresponding EEG segment from EDF
-3. Resample if configured
-4. Extract features using `AdvancedFeatureExtractor`
-5. Attach label + metadata
-6. Save split-level feature CSV
+2. Group windows by EDF file
+3. Load each EDF segment with MNE
+4. Extract features using `AdvancedFeatureExtractor` (with cache per unique window)
+5. Checkpoint every N rows for resume support
+6. Merge all chunks into final feature CSV
 
----
-
-# Configuration (`configs/fe.yaml`)
-
-All behavior is controlled through `fe.yaml`.
-
-## Window Index Inputs
-
-```yaml
-window_index:
-  train_csv: "results/dataloader/chbmit/window_index_train.csv"
-  val_csv:   "results/dataloader/chbmit/window_index_val.csv"
-  test_csv:  "results/dataloader/chbmit/window_index_test.csv"
-```
-
-These paths can point anywhere. The module does not assume a fixed folder structure.
-
----
-
-## Output
-
-```yaml
-io:
-  output_dir: "results/features"
-```
-
-Generated files:
+Output:
 
 ```
-results/features/
+results/features_raw/
 ├── features_train.csv
 ├── features_val.csv
 └── features_test.csv
@@ -86,46 +74,49 @@ results/features/
 
 ---
 
-## Sampling Control
+## Configuration (`src/config/feature_engineering.yaml`)
+
+All paths are relative to the config file and resolved automatically.
 
 ```yaml
-fe:
-  sfreq_mode: "auto"   # auto | force
-  target_sfreq: 256
-```
+window_index:
+  train_csv: ../../results/dataloader/window_index_train.csv
+  val_csv:   ../../results/dataloader/window_index_val.csv
+  test_csv:  ../../results/dataloader/window_index_test.csv
 
-- `auto` → use native EDF sampling rate  
-- `force` → resample to `target_sfreq`  
+io:
+  output_dir: ../../results/features_raw
+```
 
 ---
 
-# Feature Domains
-
-Engineered features are grouped into three primary domains:
+## Feature Domains
 
 | Domain | Scope | Includes |
 |--------|-------|----------|
-| **Time-Domain** | Per-channel + Window-level | Mean, Std, RMS, Line Length, ZCR, Skew, Kurtosis, Hjorth, Pearson correlation |
-| **Frequency-Domain** | Per-channel | Welch PSD, Band Power (δ, θ, α, β, γ), Relative Power, Spectral Entropy, FFT Dominant Frequency |
-| **Time–Frequency & Nonlinear** | Per-channel | Wavelet Energy, Wavelet Entropy, Sample Entropy, Permutation Entropy, Lempel–Ziv Complexity |
+| **Time-Domain** | Per-channel | Mean, Std, RMS, Line Length, ZCR, Skew, Kurtosis, Hjorth parameters |
+| **Frequency-Domain** | Per-channel | Welch PSD, Band Power (δ θ α β γ), Relative Power, Spectral Entropy, Peak Frequency |
+| **Time-Frequency & Nonlinear** | Per-channel | Wavelet Energy, Wavelet Entropy, Sample Entropy, Permutation Entropy, Lempel-Ziv |
+| **Cross-Channel** | Window-level | Pearson correlation matrix, coherence |
 
 ---
 
-# Detailed Data Dictionary
+## Feature Count
 
-### Reference Papers
+| Category | Per channel | Channels | Total |
+|----------|------------|---------|-------|
+| Time-domain | 11 | 16 | 176 |
+| Frequency-domain | 12 | 16 | 192 |
+| Cross-channel | — | — | 160 |
+| **Total** | **33** | **16** | **528** |
 
-1. **Paper A:**  
-   EEG Signal Processing for Medical Diagnosis, Healthcare and Monitoring — A Comprehensive Review  
-   🔗 https://ieeexplore.ieee.org/document/10353995  
+---
 
-2. **Paper B:**  
-   Frontiers in Artificial Intelligence (2022) — EEG Feature Extraction Review  
-   🔗 https://www.frontiersin.org/articles/10.3389/frai.2022.1072801  
+## Reference Papers
 
-3. **Paper C:**  
-   EEG Signal Processing and Feature Extraction — IJMTST  
-   🔗 https://www.researchgate.net/publication/374337940_EEG_Signal_Processing_and_Feature_Extraction  
+1. EEG Signal Processing for Medical Diagnosis — IEEE: https://ieeexplore.ieee.org/document/10353995  
+2. EEG Feature Extraction Review — Frontiers in AI: https://www.frontiersin.org/articles/10.3389/frai.2022.1072801  
+3. EEG Signal Processing and Feature Extraction — IJMTST: https://www.researchgate.net/publication/374337940
 
 ---
 
@@ -134,14 +125,12 @@ Engineered features are grouped into three primary domains:
 | Method | Why Used | Formula | Source |
 |--------|----------|---------|--------|
 | Mean | Detect baseline shift | μ = (1/N) Σ xᵢ | A |
-| Std | Measures amplitude variability | √[(1/N) Σ(xᵢ − μ)²] | A |
+| Std | Amplitude variability | √[(1/N) Σ(xᵢ − μ)²] | A |
 | RMS | Signal energy magnitude | √[(1/N) Σ xᵢ²] | A |
-| Line Length | Captures rapid transitions | Σ |xᵢ − xᵢ₋₁| | C |
-| ZCR | Oscillatory activity shifts | (1/N) Σ I(sign change) | A, C |
+| Line Length | Rapid transitions | Σ |xᵢ − xᵢ₋₁| | C |
+| ZCR | Oscillatory activity | (1/N) Σ I(sign change) | A, C |
 | Skew | Asymmetric spike detection | E[(x−μ)³]/σ³ | A |
 | Kurtosis | Heavy-tailed bursts | E[(x−μ)⁴]/σ⁴ | A |
-
----
 
 ## Hjorth Parameters
 
@@ -151,100 +140,49 @@ Engineered features are grouped into three primary domains:
 | Mobility | Frequency proxy | √[Var(dx)/Var(x)] | A, C |
 | Complexity | Irregularity | Mobility(dx)/Mobility(x) | A, C |
 
----
-
 ## Nonlinear Features
 
-| Method | Purpose | Formula | Source |
-|--------|---------|---------|--------|
-| Sample Entropy | Irregularity detection | −log(A/B) | A |
-| Permutation Entropy | Temporal complexity | −Σ p log(p) | A |
-| Lempel–Ziv | Signal compressibility | New substring count | A |
-
----
+| Method | Purpose | Source |
+|--------|---------|--------|
+| Sample Entropy | Irregularity detection | A |
+| Permutation Entropy | Temporal complexity | A |
+| Lempel-Ziv | Signal compressibility | A |
 
 ## Frequency-Domain (Welch PSD)
 
-| Method | Purpose | Formula | Source |
-|--------|---------|---------|--------|
-| Total Power | Overall spectral energy | ∫ PSD(f) df | B |
-| Band Power | Frequency redistribution | ∫ PSD over band | B, C |
-| Relative Power | Normalized band energy | Band / Total | C |
-| Spectral Entropy | Spectral concentration | −Σ p log(p) | C |
-| FFT Dominant Freq | Strongest oscillation | argmax |FFT(f)| | A, B |
-
----
+| Method | Purpose | Source |
+|--------|---------|--------|
+| Total Power | Overall spectral energy | B |
+| Band Power (δ θ α β γ) | Frequency redistribution | B, C |
+| Relative Power | Normalized band energy | C |
+| Spectral Entropy | Spectral concentration | C |
+| Peak Frequency | Dominant oscillation | A, B |
 
 ## Wavelet Features
 
-| Method | Purpose | Formula | Source |
-|--------|---------|---------|--------|
-| Approx Energy | Low-frequency seizure energy | Σ cA² | A, C |
-| Detail Energy | Transient burst detection | Σ cD² | A, C |
-| Wavelet Entropy | Multi-scale dispersion | −Σ p log(p) | C |
-
----
+| Method | Purpose | Source |
+|--------|---------|--------|
+| Approx Energy | Low-frequency seizure energy | A, C |
+| Detail Energy | Transient burst detection | A, C |
+| Wavelet Entropy | Multi-scale dispersion | C |
 
 ## Connectivity Features
 
-| Method | Purpose | Formula | Source |
-|--------|---------|---------|--------|
-| Pearson Corr | Hypersynchronization | Cov(X,Y)/(σxσy) | B |
-| Corr Mean/Std/Max/Min | Network summary | Stats of upper triangle | B |
+| Method | Purpose | Source |
+|--------|---------|--------|
+| Pearson Correlation | Hypersynchronization | B |
+| Corr Mean / Std / Max / Min | Network summary stats | B |
 
 ---
 
-# Feature Count
+## Requirements
 
-With default configuration:
+See root `requirements.txt`. Key dependencies:
 
-Per-channel features:
-
-- Time-domain: 10  
-- Nonlinear: 3  
-- Frequency-domain: 13  
-- Wavelet: 6  
-
-**Total per channel = 32 features**
-
-Connectivity (if enabled):
-
-- 4 features
-
-### Final Formula
-
-```
-Total Features = (C × 32) + 4
-```
-
-Where `C` = number of EEG channels.
-
-### Example (16 channels)
-
-```
-16 × 32 = 512
-+ 4 connectivity
-= 516 features per window
-```
-
-Metadata columns (split, label, timing, path, subject_id) are not included in model features.
-
----
-
-# Requirements
-
-- Python ≥ 3.9  
-- numpy ≥ 1.24  
-- pandas ≥ 2.0  
-- scipy ≥ 1.10  
-- mne ≥ 1.5  
-- pywavelets ≥ 1.4  
-- PyYAML ≥ 6.0  
-
----
-
-# Run Command
-
-```bash
-python run_features_from_index.py --config configs/fe.yaml
-```
+- Python >= 3.9  
+- numpy >= 1.24  
+- pandas >= 2.0  
+- scipy >= 1.10  
+- mne >= 1.5  
+- PyWavelets >= 1.4  
+- joblib >= 1.3  
