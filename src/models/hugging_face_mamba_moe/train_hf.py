@@ -88,7 +88,17 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     args = parse_args()
     if args.model == "all":
+        incompatible_models = {
+            "bendr_pretrained": "requires 20 channels (CHB-MIT has 16)",
+            "biot_pretrained": "requires 200 Hz sampling (CHB-MIT is 256 Hz)",
+            "eegpt_pretrained": "requires 62 channels (CHB-MIT has 19)",
+            "hf_st_eegformer": "requires 128 Hz sampling (CHB-MIT is 256 Hz)",
+            "st_eegformer": "requires 128 Hz sampling (CHB-MIT is 256 Hz)"
+        }
         for model_name in list_hf_models():
+            if model_name in incompatible_models:
+                logger.warning("Skipping %s: %s", model_name, incompatible_models[model_name])
+                continue
             logger.info("=" * 60)
             logger.info("Training HF model: %s", model_name)
             logger.info("=" * 60)
@@ -165,7 +175,8 @@ def _run_test(
     """Load best checkpoint, evaluate, and rewrite it in the unified schema."""
     best_ckpt = ckpt_dir / "best_model.pt"
     if best_ckpt.exists():
-        model.load_state_dict(torch.load(best_ckpt, map_location=device, weights_only=True))
+        ckpt = torch.load(best_ckpt, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
     test_m = _run_epoch(model, test_dl, criterion, device, optimizer=None,
                         threshold=threshold, smoothing_mode=args.smoothing_mode,
                         smoothing_window=args.smoothing_window, min_positive_run=args.min_positive_run,
