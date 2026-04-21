@@ -12,7 +12,7 @@ Primary metric: **AUCPR** (Area Under Precision-Recall Curve) — correct for se
 | Random Forest (Optuna) | **0.357** | 0.882 | 0.152 |
 | XGBoost (Optuna) | 0.251 | 0.927 | 0.192 |
 | LightGBM (Optuna) | 0.230 | **0.933** | 0.195 |
-| TabNet Baseline | 0.309 | 0.856 | **0.220** |
+| TabNet | 0.309 | 0.856 | **0.220** |
 
 ---
 

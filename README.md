@@ -14,7 +14,7 @@ End-to-end pipeline for automated seizure detection from scalp EEG recordings. W
 | Model | Test AUCPR | Test ROC-AUC | Test F1 |
 |-------|-----------|-------------|---------|
 | Random Forest (Optuna) | **0.357** | 0.882 | 0.152 |
-| TabNet Baseline | 0.309 | 0.856 | **0.220** |
+| TabNet | 0.309 | 0.856 | **0.220** |
 | XGBoost (Optuna) | 0.251 | **0.927** | 0.192 |
 | LightGBM (Optuna) | 0.230 | 0.933 | 0.195 |
 
