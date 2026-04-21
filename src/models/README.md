@@ -16,7 +16,6 @@ Primary metric: **AUCPR** (Area Under Precision-Recall Curve) — correct for se
 | TabNet Optuna | 0.041 | 0.318 | 0.893 | 0.218 |
 | ECT-TabNet | 0.035 | 0.305 | 0.889 | 0.214 |
 | H-TabNet | 0.044 | 0.331 | **0.907** | **0.247** |
-| Hybrid TCN+Transformer+BiLSTM | 0.049 | 0.035 | — | — |
 
 ---
 
