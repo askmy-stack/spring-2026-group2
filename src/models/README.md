@@ -170,33 +170,6 @@ Hierarchical encoding captures spatial EEG topology — adjacent channels tend t
 
 ---
 
-## Hybrid Deep Learning (TCN + Transformer + BiLSTM)
-
-Works directly on **raw EEG tensors** — no feature engineering needed.
-
-```bash
-python -m src.modeling.tabnet.train_hybrid_raw \
-    --config src/config/hybrid_raw.yaml
-```
-
-### Architecture
-
-Input: `(batch × 16 channels × 256 time samples)`
-
-Three parallel encoders:
-
-| Encoder | Design | Output |
-|---------|--------|--------|
-| TCN | 5 dilated conv blocks, dilations 1→2→4→8→16, receptive field = 256 samples | (batch, 64) |
-| Channel Transformer | 2-layer multi-head self-attention (4 heads) across 16 channel tokens | (batch, 64) |
-| BiLSTM | Bidirectional LSTM over 256 timesteps, 16 channels as features | (batch, 128) |
-
-Concatenate → `(batch, 256)` → 4-layer MLP → Sigmoid → seizure probability
-
-Inspired by the Neurazum bai-Epilepsy-6 architecture.
-
----
-
 ## Utils
 
 ### config_utils.py
