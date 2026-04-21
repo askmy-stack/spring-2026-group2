@@ -361,20 +361,19 @@ check("TabNet: fit 2 epochs + predict_proba", _test_tabnet_fit)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _test_hybrid_import():
-    # Check optuna files in baseline/ and advanced file in improved/ have clean imports
+    # All optuna scripts are now in improved/; train_tabnet_advanced.py has been removed
     checks = [
-        PROJECT_ROOT / "src" / "models" / "baseline" / "optuna_lightgbm.py",
-        PROJECT_ROOT / "src" / "models" / "baseline" / "optuna_xgboost.py",
-        PROJECT_ROOT / "src" / "models" / "baseline" / "optuna_random_forest.py",
-        PROJECT_ROOT / "src" / "models" / "baseline" / "optuna_tabnet.py",
-        PROJECT_ROOT / "src" / "models" / "improved" / "train_tabnet_advanced.py",
+        PROJECT_ROOT / "src" / "models" / "improved" / "optuna_lightgbm.py",
+        PROJECT_ROOT / "src" / "models" / "improved" / "optuna_xgboost.py",
+        PROJECT_ROOT / "src" / "models" / "improved" / "optuna_random_forest.py",
+        PROJECT_ROOT / "src" / "models" / "improved" / "optuna_tabnet.py",
     ]
     for path in checks:
         src = path.read_text(encoding="utf-8")
         assert "src.modeling" not in src, f"{path.name}: old src.modeling import"
         assert "spring-2026-group2" not in src, f"{path.name}: hardcoded path"
         assert "tabnet.prepare_memmap" not in src, f"{path.name}: old tabnet import"
-    return "all model files have clean imports"
+    return "all optuna scripts in improved/ have clean imports"
 
 
 def _test_hybrid_forward():

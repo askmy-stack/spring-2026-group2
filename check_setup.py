@@ -97,7 +97,7 @@ check("config: feature_engineering.yaml no hardcoding",       _check_config_fe)
 # ── 3. Model file imports (top-level, no training triggered) ──────────────────
 
 def _check_import_lgbm():
-    with open("src/models/baseline/optuna_lightgbm.py") as f:
+    with open("src/models/improved/optuna_lightgbm.py") as f:
         src = f.read()
     assert "src.modeling" not in src, "Old src.modeling import still present"
     assert "src.models.utils" in src,  "New src.models.utils import missing"
@@ -111,17 +111,25 @@ def _check_import_tabnet():
     assert "src.models.utils" in src
     return "no sys.path hacks"
 
-def _check_import_tabnet_advanced():
-    with open("src/models/improved/train_tabnet_advanced.py") as f:
-        src = f.read()
-    assert "tabnet.prepare_memmap" not in src, "Old tabnet.prepare_memmap import still present"
-    assert "sys.path.insert" not in src, "sys.path.insert hack still present"
-    assert "src.models.utils" in src
-    return "train_tabnet_advanced imports clean"
+def _check_import_optuna_scripts():
+    """All optuna scripts live in improved/ and have clean imports."""
+    scripts = [
+        "src/models/improved/optuna_lightgbm.py",
+        "src/models/improved/optuna_xgboost.py",
+        "src/models/improved/optuna_random_forest.py",
+        "src/models/improved/optuna_tabnet.py",
+    ]
+    for path in scripts:
+        with open(path) as f:
+            src = f.read()
+        name = Path(path).name
+        assert "src.modeling" not in src,        f"{name}: old src.modeling import"
+        assert "tabnet.prepare_memmap" not in src, f"{name}: old tabnet import"
+    return "all 4 optuna scripts in improved/ have clean imports"
 
-check("optuna_lightgbm.py: no old imports",             _check_import_lgbm)
-check("train_tabnet.py: no sys.path hacks",             _check_import_tabnet)
-check("train_tabnet_advanced.py: clean imports",        _check_import_tabnet_advanced)
+check("optuna_lightgbm.py: no old imports",              _check_import_lgbm)
+check("train_tabnet.py: no sys.path hacks",              _check_import_tabnet)
+check("improved/optuna_*.py: clean imports (all 4)",     _check_import_optuna_scripts)
 
 
 # ── 4. No hardcoded paths anywhere in src/models/ ─────────────────────────────
