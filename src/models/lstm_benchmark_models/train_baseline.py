@@ -90,7 +90,8 @@ def train_baseline(model_name: str, data_path: Path, config: Dict) -> Dict:
     _run_training_loop(model, train_loader, val_loader, criterion, optimizer, scheduler, stopper, config, device, scaler)
     ckpt_path = ckpt_dir / f"{model_name}_best.pt"
     if ckpt_path.exists():
-        model.load_state_dict(torch.load(ckpt_path, map_location=device, weights_only=True))
+        ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt["model_state_dict"])
         logger.info("Loaded best checkpoint for threshold tuning and test evaluation.")
     val_probs, val_labels = _collect_probs(model, val_loader, device)
     threshold = find_optimal_threshold(val_labels, val_probs)
