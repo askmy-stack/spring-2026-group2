@@ -2,7 +2,7 @@
 CHB-MIT EEG Dataset — Exploratory Data Analysis
 =================================================
 Saves all figures and a summary CSV to:
-  /home/amir/Desktop/GWU/Research/EEG/results/EDA/
+  <project>/src/results/eda/
 
 Run:
   python3 src/EDA/eda_chbmit.py
@@ -28,8 +28,9 @@ warnings.filterwarnings("ignore")
 mne.set_log_level("ERROR")
 
 # ── Paths ──────────────────────────────────────────────────────────────────
-RAW_ROOT  = Path("/home/amir/Desktop/GWU/Research/EEG/data/raw_data/chbmit")
-OUT_ROOT  = Path("/home/amir/Desktop/GWU/Research/EEG/results/EDA")
+PROJECT_SRC = Path(__file__).resolve().parent.parent
+RAW_ROOT = PROJECT_SRC / "data" / "chbmit"
+OUT_ROOT = PROJECT_SRC / "results" / "eda"
 
 for d in ["overview", "raw_signals", "psd", "stats", "seizure_vs_bg", "correlation"]:
     (OUT_ROOT / d).mkdir(parents=True, exist_ok=True)
@@ -400,7 +401,7 @@ for i, (ax_, ch) in enumerate(zip(axes_flat, ch_names)):
     for (band, (lo, hi)), bc in zip(FREQ_BANDS.items(), colors):
         ax_.axvspan(lo, hi, alpha=0.25, color=bc)
         mask = (freqs >= lo) & (freqs <= hi)
-        band_power[band].append(float(np.trapz(psd[mask], freqs[mask])))
+        band_power[band].append(float(np.trapezoid(psd[mask], freqs[mask])))
 
 # hide empty subplots
 for ax_ in list(axes_flat)[n_ch:]:

@@ -1,0 +1,50 @@
+experiment_name: tabnet_baseline
+model_type: tabnet
+target_col: label
+
+paths:
+  train_csv:  ~/spring-2026-group2/results/features_raw/features_train.csv
+  val_csv:    ~/spring-2026-group2/results/features_raw/features_val.csv
+  test_csv:   ~/spring-2026-group2/results/features_raw/features_test.csv
+  memmap_dir: ~/spring-2026-group2/results/modeling/tabnet/memmap
+  output_dir: ~/spring-2026-group2/results/modeling/tabnet/baseline_v2
+
+training:
+  random_state: 42
+  max_epochs: 30
+  patience: 5
+  use_gpu: true
+  grad_clip: 1.0
+
+model_params:
+  n_d: 64
+  n_a: 64
+  n_steps: 5
+  gamma: 1.2
+  lambda_sparse: 1.0e-3
+  momentum: 0.02
+  mask_type: entmax
+
+optimizer_params:
+  lr: 5.0e-3
+  weight_decay: 1.0e-5
+
+scheduler_params:
+  mode: max
+  factor: 0.5
+  patience: 3
+  min_lr: 1.0e-6
+
+data:
+  batch_size: 1024
+  virtual_batch_size: 128
+  num_workers: 4
+
+evaluation:
+  default_threshold: 0.5
+
+plots:
+  save_pr_curve: true
+  save_roc_curve: true
+  save_threshold_plot: true
+  save_confusion_matrix: true
