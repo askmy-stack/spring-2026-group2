@@ -103,12 +103,16 @@ io:
 
 ## Feature Count
 
-| Category | Per channel | Channels | Total |
-|----------|------------|---------|-------|
-| Time-domain | 11 | 16 | 176 |
-| Frequency-domain | 12 | 16 | 192 |
-| Cross-channel | — | — | 160 |
-| **Total** | **33** | **16** | **528** |
+| Category | Features | Per channel |
+|----------|---------|------------|
+| Time-domain | mean, std, rms, min, max, range, line_length, zcr, skew, kurtosis | 10 |
+| Hjorth | hjorth_activity, hjorth_mobility, hjorth_complexity | 3 |
+| Nonlinear | sampen, perm_entropy | 2 |
+| Frequency | total_power, delta/theta/alpha/beta/gamma power + relative, spec_entropy | 12 |
+| FFT | fft_dom_freq | 1 |
+| Wavelet | wav_E_A, wav_E_D1, wav_E_D2, wav_E_D3, wav_entropy | 5 |
+| **Total per channel** | | **33** |
+| **Total (× 16 channels)** | | **528** |
 
 ---
 
