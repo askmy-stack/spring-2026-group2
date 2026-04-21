@@ -64,9 +64,29 @@ def train_mamba(model_name: str, data_path: Path, config: Dict) -> Dict:
     )
     ckpt_dir = Path(config["outputs"]["checkpoint_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    # Build model_config for checkpoint schema
+    cfg = config["models"]["hugging_face_mamba_moe"]
+    data_cfg = config["data"]
+    model_config = dict(
+        n_channels=data_cfg["n_channels"],
+        time_steps=data_cfg["time_steps"],
+        d_model=cfg["d_model"],
+        d_state=cfg["d_state"],
+        n_layers=cfg["n_layers"],
+        dropout=cfg["dropout"],
+    )
+    if model_name == "eeg_mamba":
+        model_config["d_conv"] = cfg.get("d_conv", 4)
+        model_config["bidirectional"] = cfg.get("bidirectional", True)
+    elif model_name == "eeg_mamba_moe":
+        model_config["num_experts"] = cfg.get("num_experts", 8)
+        model_config["top_k"] = cfg.get("top_k", 2)
     stopper = EarlyStopping(
         patience=config["training"]["early_stopping_patience"],
         checkpoint_path=ckpt_dir / f"{model_name}_best.pt",
+        model_config=model_config,
+        input_spec={"channels": data_cfg["n_channels"], "time_steps": data_cfg["time_steps"]},
+        preprocess=config.get("preprocess", {}),
     )
     _run_training_loop(model, model_name, train_loader, val_loader, criterion, optimizer, scheduler, stopper, config, device)
     return _evaluate_on_test(model, test_loader, device)
@@ -86,7 +106,7 @@ def _run_training_loop(
         train_loss = _train_one_epoch(model, train_loader, criterion, optimizer, config, device, is_moe, moe_weight)
         val_loss = _validate_one_epoch(model, val_loader, criterion, device, is_moe)
         scheduler.step()
-        stopper.step(val_loss, model)
+        stopper.step(epoch, val_loss, model, val_metrics={"val_loss": val_loss})
         logger.info("Epoch %d/%d — train=%.4f val=%.4f", epoch + 1, num_epochs, train_loss, val_loss)
         if stopper.should_stop:
             logger.info("Early stopping triggered.")
