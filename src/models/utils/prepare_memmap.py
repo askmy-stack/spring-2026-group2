@@ -2,7 +2,7 @@
 """
 Converts feature CSVs into memory-mapped NumPy arrays for TabNet training.
 Reads source CSV paths from the same YAML config used by train_tabnet.py
-and optuna_tabnet.py, so there is a single source of truth for all paths.
+so there is a single source of truth for all paths.
 
 Skips conversion if memmap files already exist (use --force to overwrite).
 

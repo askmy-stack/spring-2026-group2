@@ -15,7 +15,6 @@ End-to-end pipeline for automated seizure detection from scalp EEG recordings. W
 |-------|-----------|-------------|---------|
 | LightGBM (Optuna) | **0.334** | **0.901** | **0.235** |
 | XGBoost (Optuna) | 0.312 | 0.889 | 0.221 |
-| TabNet Optuna | 0.318 | 0.893 | 0.218 |
 | TabNet Baseline | 0.298 | 0.881 | 0.201 |
 | Random Forest (Optuna) | 0.285 | 0.871 | 0.198 |
 
@@ -49,20 +48,18 @@ eeg/
 │   │   ├── baseline_lightgbm.yaml
 │   │   ├── baseline_xgboost.yaml
 │   │   ├── baseline_random_forest.yaml
-│   │   ├── tabnet_baseline.yaml
-│   │   └── tabnet_optuna.yaml
+│   │   └── tabnet_baseline.yaml
 │   ├── feature_engineering/
 │   │   ├── extractor.py           # AdvancedFeatureExtractor (528 features)
 │   │   └── run_features_from_index.py  # Feature extraction pipeline
 │   ├── models/
 │   │   ├── baseline/
 │   │   │   ├── train_model.py         # LightGBM / XGBoost / RF training
-│   │   │   └── train_tabnet.py        # TabNet baseline
+│   │   │   └── train_tabnet.py        # TabNet
 │   │   ├── improved/
 │   │   │   ├── optuna_lightgbm.py     # Optuna-tuned LightGBM
 │   │   │   ├── optuna_xgboost.py      # Optuna-tuned XGBoost
-│   │   │   ├── optuna_random_forest.py
-│   │   │   └── optuna_tabnet.py       # Optuna-tuned TabNet
+│   │   │   └── optuna_random_forest.py
 │   │   └── utils/
 │   │       ├── config_utils.py        # Portable path resolution
 │   │       ├── data_utils.py          # load_split, validate_feature_columns
@@ -138,13 +135,8 @@ python -m src.models.improved.optuna_random_forest \
 python -m src.models.utils.prepare_memmap \
     --config src/config/tabnet_baseline.yaml
 
-# Baseline TabNet
 python -m src.models.baseline.train_tabnet \
     --config src/config/tabnet_baseline.yaml
-
-# Optuna-tuned TabNet
-python -m src.models.improved.optuna_tabnet \
-    --config src/config/tabnet_optuna.yaml
 ```
 
 ---

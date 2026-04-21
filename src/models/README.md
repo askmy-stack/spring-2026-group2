@@ -13,7 +13,6 @@ Primary metric: **AUCPR** (Area Under Precision-Recall Curve) — correct for se
 | XGBoost (Optuna) | 0.038 | 0.312 | 0.889 | 0.221 |
 | LightGBM (Optuna) | **0.042** | **0.334** | **0.901** | **0.235** |
 | TabNet Baseline | 0.038 | 0.298 | 0.881 | 0.201 |
-| TabNet Optuna | 0.041 | 0.318 | 0.893 | 0.218 |
 
 ---
 
@@ -27,8 +26,7 @@ src/models/
 ├── improved/
 │   ├── optuna_lightgbm.py      # LightGBM with Optuna Bayesian tuning
 │   ├── optuna_xgboost.py       # XGBoost with Optuna Bayesian tuning
-│   ├── optuna_random_forest.py # Random Forest with Optuna Bayesian tuning
-│   └── optuna_tabnet.py        # TabNet with Optuna tuning
+│   └── optuna_random_forest.py # Random Forest with Optuna Bayesian tuning
 └── utils/
     ├── config_utils.py         # YAML loader with portable path resolution
     ├── data_utils.py           # load_split, validate_feature_columns
@@ -130,13 +128,8 @@ Use `--force` to overwrite existing memmap files.
 ### Step 2 — Train TabNet
 
 ```bash
-# Baseline TabNet
 python -m src.models.baseline.train_tabnet \
     --config src/config/tabnet_baseline.yaml
-
-# Optuna-tuned TabNet
-python -m src.models.improved.optuna_tabnet \
-    --config src/config/tabnet_optuna.yaml
 ```
 
 ---

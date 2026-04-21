@@ -366,7 +366,6 @@ def _test_hybrid_import():
         PROJECT_ROOT / "src" / "models" / "improved" / "optuna_lightgbm.py",
         PROJECT_ROOT / "src" / "models" / "improved" / "optuna_xgboost.py",
         PROJECT_ROOT / "src" / "models" / "improved" / "optuna_random_forest.py",
-        PROJECT_ROOT / "src" / "models" / "improved" / "optuna_tabnet.py",
     ]
     for path in checks:
         src = path.read_text(encoding="utf-8")

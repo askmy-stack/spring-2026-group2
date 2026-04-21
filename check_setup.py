@@ -117,7 +117,6 @@ def _check_import_optuna_scripts():
         "src/models/improved/optuna_lightgbm.py",
         "src/models/improved/optuna_xgboost.py",
         "src/models/improved/optuna_random_forest.py",
-        "src/models/improved/optuna_tabnet.py",
     ]
     for path in scripts:
         with open(path) as f:
@@ -125,11 +124,11 @@ def _check_import_optuna_scripts():
         name = Path(path).name
         assert "src.modeling" not in src,        f"{name}: old src.modeling import"
         assert "tabnet.prepare_memmap" not in src, f"{name}: old tabnet import"
-    return "all 4 optuna scripts in improved/ have clean imports"
+    return "all 3 optuna scripts in improved/ have clean imports"
 
 check("optuna_lightgbm.py: no old imports",              _check_import_lgbm)
 check("train_tabnet.py: no sys.path hacks",              _check_import_tabnet)
-check("improved/optuna_*.py: clean imports (all 4)",     _check_import_optuna_scripts)
+check("improved/optuna_*.py: clean imports (all 3)",     _check_import_optuna_scripts)
 
 
 # ── 4. No hardcoded paths anywhere in src/models/ ─────────────────────────────
