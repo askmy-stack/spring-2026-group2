@@ -23,6 +23,7 @@ APP_DIR = Path(__file__).resolve().parent
 SRC_DIR = APP_DIR.parent
 PROJECT_ROOT = SRC_DIR.parent
 SERVER_UPLOAD_DIR = PROJECT_ROOT / "uploads"
+HOME_IMAGE_PATH = APP_DIR / "assets" / "home_brain.png"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
@@ -32,6 +33,8 @@ from data_loader.core.channels import standardize_channels
 from data_loader.core.io import read_raw
 from data_loader.core.signal import normalize_signal, preprocess
 from feature.feature_engineering import AdvancedFeatureExtractor
+from models.improved_lstm_models.architectures import HierarchicalLSTM
+from models.lstm_benchmark_models.architectures import M4_CNNLSTM
 
 
 def log_event(message: str) -> None:
@@ -45,6 +48,20 @@ def list_server_edf_files() -> list[Path]:
         path for path in SERVER_UPLOAD_DIR.iterdir()
         if path.is_file() and path.suffix.lower() == ".edf"
     )
+
+
+def resolve_home_image_path() -> Path | None:
+    candidates = [
+        HOME_IMAGE_PATH,
+        PROJECT_ROOT / "src" / "streamlit" / "assets" / "home_brain.png",
+        SRC_DIR / "streamlit" / "assets" / "home_brain.png",
+        Path.cwd() / "src" / "streamlit" / "assets" / "home_brain.png",
+        Path.cwd() / "streamlit" / "assets" / "home_brain.png",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 @dataclass(frozen=True)
@@ -235,6 +252,14 @@ def apply_app_theme() -> None:
         h1, h2, h3, label, p, div, span {
             color: #eaf7ff;
         }
+        .stApp a,
+        .stApp button,
+        .stApp [data-testid="stToolbar"] *,
+        .stApp [data-testid="stDecoration"] *,
+        .stApp [data-testid="stStatusWidget"] *,
+        .stApp [data-testid="stHeader"] * {
+            color: #123b66 !important;
+        }
         div[data-testid="stMetric"] {
             background: rgba(8, 20, 33, 0.72);
             border: 1px solid rgba(75, 204, 255, 0.16);
@@ -250,12 +275,29 @@ def apply_app_theme() -> None:
             border-radius: 16px !important;
             border: 1px solid rgba(75, 204, 255, 0.16) !important;
         }
+        div[data-baseweb="select"] span,
+        div[data-baseweb="input"] input,
+        div[data-baseweb="input"] span,
+        div[data-testid="stMultiSelect"] span,
+        div[role="listbox"] *,
+        li[role="option"] *,
+        ul[role="listbox"] * {
+            color: #123b66 !important;
+        }
+        div[role="listbox"],
+        ul[role="listbox"] {
+            background: #f4f8fc !important;
+        }
         button[kind="primary"] {
             border-radius: 999px !important;
             background: linear-gradient(90deg, #00d7d6 0%, #2f8cff 100%) !important;
             border: none !important;
             color: #07111f !important;
             font-weight: 700 !important;
+        }
+        button[kind="secondary"],
+        button[kind="secondary"] * {
+            color: #123b66 !important;
         }
         .eeg-shell {
             background: rgba(8, 20, 33, 0.68);
@@ -276,6 +318,13 @@ def apply_app_theme() -> None:
             color: #91c8dd;
             font-size: 0.98rem;
             margin-bottom: 0;
+        }
+        .image-card {
+            background: rgba(8, 20, 33, 0.62);
+            border: 1px solid rgba(75, 204, 255, 0.14);
+            border-radius: 24px;
+            padding: 0.8rem;
+            box-shadow: 0 18px 38px rgba(0, 0, 0, 0.22);
         }
         </style>
         """,
@@ -320,6 +369,24 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         window_sec=1.0,
         notes="Uses the project CNN pipeline profile copied from saved training config.",
     ),
+    "lstm": ModelProfile(
+        key="lstm",
+        label="LSTM",
+        channels=16,
+        samples=256,
+        sfreq=256,
+        window_sec=1.0,
+        notes="Uses the saved project LSTM checkpoint from the outputs folder.",
+    ),
+    "cnn_lstm": ModelProfile(
+        key="cnn_lstm",
+        label="CNN LSTM",
+        channels=16,
+        samples=256,
+        sfreq=256,
+        window_sec=1.0,
+        notes="Uses the saved project CNN-LSTM checkpoint from the outputs folder.",
+    ),
     "custom": ModelProfile(
         key="custom",
         label="Custom",
@@ -332,6 +399,63 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
 }
 
 APP_MODEL_KEYS = ("enhanced_cnn_1d", "multiscale_attention_cnn", "tabnet_features", "custom")
+EXCLUDED_MODEL_KEYS = {"deepconvnet", "st_eegformer", "custom"}
+PREFERRED_MODEL_ORDER = (
+    "enhanced_cnn_1d",
+    "multiscale_attention_cnn",
+    "lstm",
+    "cnn_lstm",
+    "tabnet_features",
+)
+
+
+def get_model_label(model_key: str) -> str:
+    profile = MODEL_PROFILES.get(model_key)
+    if profile is not None:
+        return profile.label
+    return model_key.replace("_", " ").title()
+
+
+def list_local_checkpoint_model_names() -> list[str]:
+    models_root = PROJECT_ROOT / "src" / "outputs" / "models"
+    if not models_root.exists():
+        return []
+
+    model_names: list[str] = []
+    for model_dir in sorted(path for path in models_root.iterdir() if path.is_dir()):
+        if any(child.is_file() and child.suffix == ".pt" for child in model_dir.iterdir()):
+            model_names.append(model_dir.name)
+    return model_names
+
+
+def get_local_checkpoint_path(model_name: str) -> Path | None:
+    model_dir = PROJECT_ROOT / "src" / "outputs" / "models" / model_name
+    if not model_dir.exists():
+        return None
+
+    checkpoints = sorted(
+        path for path in model_dir.iterdir()
+        if path.is_file() and path.suffix == ".pt"
+    )
+    if not checkpoints:
+        return None
+    return checkpoints[0]
+
+
+def build_model_from_checkpoint(model_name: str, checkpoint: dict[str, object]) -> tuple[torch.nn.Module, int]:
+    model_config = dict(checkpoint.get("model_config", {}))
+    if model_name == "lstm":
+        return HierarchicalLSTM(**model_config), 4
+    if model_name == "cnn_lstm":
+        return M4_CNNLSTM(**model_config), 3
+
+    config = checkpoint.get("config", {})
+    model_kwargs = {
+        "in_channels": int(config.get("channels", 16)),
+        "num_classes": 2,
+        "dropout": float(config.get("dropout", 0.3)),
+    }
+    return create_model(model_name, **model_kwargs), 3
 
 
 def adapt_window(array: np.ndarray, target_channels: int, target_samples: int) -> tuple[np.ndarray, dict[str, str]]:
@@ -578,24 +702,26 @@ def get_edf_duration_from_path(edf_path: str) -> float:
 def load_inference_bundle(model_name: str) -> dict[str, object]:
     started_at = time.perf_counter()
     log_event(f"load_inference_bundle start model={model_name}")
-    paths = artifact_paths(model_name)
-    checkpoint = torch.load(paths.checkpoint_path, map_location="cpu")
+    checkpoint_path = get_local_checkpoint_path(model_name)
+    if checkpoint_path is None:
+        paths = artifact_paths(model_name)
+        checkpoint_path = paths.checkpoint_path
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
     config = checkpoint.get("config", {})
-    threshold = float(checkpoint.get("best_threshold", 0.5))
+    threshold = float(checkpoint.get("best_threshold", checkpoint.get("optimal_threshold", 0.5)))
 
-    model_kwargs = {
-        "in_channels": int(config.get("channels", 16)),
-        "num_classes": 2,
-        "dropout": float(config.get("dropout", 0.3)),
-    }
-    model = create_model(model_name, **model_kwargs)
+    model, input_rank = build_model_from_checkpoint(model_name, checkpoint)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
-    log_event(f"load_inference_bundle done model={model_name} in {time.perf_counter() - started_at:.2f}s")
+    log_event(
+        f"load_inference_bundle done model={model_name} checkpoint={checkpoint_path} "
+        f"in {time.perf_counter() - started_at:.2f}s"
+    )
     return {
         "model": model,
         "threshold": threshold,
         "config": config,
+        "input_rank": input_rank,
     }
 
 
@@ -702,11 +828,17 @@ def predict_single_window(model_name: str, prepared_array: np.ndarray) -> dict[s
     model = bundle["model"]
     threshold = float(bundle["threshold"])
     x = torch.from_numpy(prepared_array).unsqueeze(0)
+    if int(bundle.get("input_rank", 3)) == 4:
+        x = x.unsqueeze(1)
     with torch.no_grad():
         logits = model(x)
-        probs = torch.softmax(logits, dim=1)[0]
-    seizure_prob = float(probs[1].item())
-    background_prob = float(probs[0].item())
+        if logits.ndim == 2 and logits.shape[1] == 1:
+            seizure_prob = float(torch.sigmoid(logits)[0, 0].item())
+            background_prob = 1.0 - seizure_prob
+        else:
+            probs = torch.softmax(logits, dim=1)[0]
+            seizure_prob = float(probs[1].item())
+            background_prob = float(probs[0].item())
     pred_label = "seizure" if seizure_prob >= threshold else "background"
     log_event(
         f"predict_single_window done model={model_name} in {time.perf_counter() - started_at:.2f}s "
@@ -721,21 +853,471 @@ def predict_single_window(model_name: str, prepared_array: np.ndarray) -> dict[s
     }
 
 
+def render_case_selector(section_key: str, case_title: str, window_sec: float) -> dict[str, object] | None:
+    st.markdown(f"### {case_title}")
+    slider_key = f"{section_key}_window_slider"
+    number_key = f"{section_key}_window_number"
+    widget_file_key = f"{section_key}_widget_file_key"
+    input_mode = st.radio(
+        "Input source",
+        options=["Upload from local", "Use server file"],
+        horizontal=True,
+        key=f"{section_key}_input_mode",
+    )
+
+    uploaded = None
+    server_file_path: Path | None = None
+    if input_mode == "Upload from local":
+        uploaded = st.file_uploader(
+            "Upload EDF file",
+            type=["edf"],
+            key=f"{section_key}_upload",
+        )
+    else:
+        server_files = list_server_edf_files()
+        if server_files:
+            server_name = st.selectbox(
+                "Select a server EDF file",
+                options=[path.name for path in server_files],
+                key=f"{section_key}_server_file",
+            )
+            server_file_path = next((path for path in server_files if path.name == server_name), None)
+        else:
+            st.warning(f"No EDF files found in {SERVER_UPLOAD_DIR}")
+
+    if uploaded is None and server_file_path is None:
+        st.info("Choose an EDF file for this comparison panel.")
+        return None
+
+    file_bytes = b""
+    active_name = ""
+    active_source_label = ""
+    file_key = ""
+    try:
+        if uploaded is not None:
+            active_name = uploaded.name
+            active_source_label = "local_upload"
+            file_bytes = uploaded.getvalue()
+            file_key = f"upload:{uploaded.name}:{len(file_bytes)}"
+            raw_duration = get_edf_duration(file_bytes, uploaded.name)
+        else:
+            assert server_file_path is not None
+            active_name = server_file_path.name
+            active_source_label = "server_file"
+            stat = server_file_path.stat()
+            file_key = f"server:{server_file_path}:{stat.st_mtime_ns}:{stat.st_size}"
+            raw_duration = get_edf_duration_from_path(str(server_file_path))
+    except Exception as exc:
+        st.error(f"Could not read the EDF file: {exc}")
+        return None
+
+    edf_window_max_start = max(0.0, raw_duration - window_sec)
+    st.caption(f"Source: {active_source_label}")
+    metric_cols = st.columns(2)
+    metric_cols[0].metric("Recording", active_name)
+    metric_cols[1].metric("Duration", f"{raw_duration:.1f} s")
+
+    if st.session_state.get(widget_file_key) != file_key:
+        st.session_state[widget_file_key] = file_key
+        st.session_state[slider_key] = 0.0
+        st.session_state[number_key] = 0.0
+    else:
+        st.session_state[slider_key] = min(float(st.session_state.get(slider_key, 0.0)), float(edf_window_max_start))
+        st.session_state[number_key] = min(float(st.session_state.get(number_key, 0.0)), float(edf_window_max_start))
+
+    window_start_sec = st.slider(
+        "EDF window start (seconds)",
+        min_value=0.0,
+        max_value=float(edf_window_max_start),
+        step=float(window_sec),
+        key=slider_key,
+    )
+    manual_window_start_sec = st.number_input(
+        "Manual start (s)",
+        min_value=0.0,
+        max_value=float(edf_window_max_start),
+        step=float(window_sec),
+        key=number_key,
+    )
+
+    return {
+        "uploaded": uploaded,
+        "server_file_path": server_file_path,
+        "file_bytes": file_bytes,
+        "active_name": active_name,
+        "active_source_label": active_source_label,
+        "window_start_sec": float(manual_window_start_sec),
+        "file_key": file_key,
+    }
+
+
+def process_case_selection(
+    selection: dict[str, object],
+    cfg: dict,
+    target_channels: int,
+    target_samples: int,
+    normalize: bool,
+) -> dict[str, object]:
+    uploaded = selection["uploaded"]
+    if uploaded is not None:
+        prepared_array, adaptation_info, input_metadata = process_edf_upload(
+            file_bytes=selection["file_bytes"],
+            file_name=selection["active_name"],
+            cfg=cfg,
+            target_channels=target_channels,
+            target_samples=target_samples,
+            window_start_sec=float(selection["window_start_sec"]),
+            normalize=normalize,
+        )
+    else:
+        server_file_path = selection["server_file_path"]
+        assert isinstance(server_file_path, Path)
+        prepared_array, adaptation_info, input_metadata = process_edf_path(
+            edf_path=server_file_path,
+            cfg=cfg,
+            target_channels=target_channels,
+            target_samples=target_samples,
+            window_start_sec=float(selection["window_start_sec"]),
+            normalize=normalize,
+        )
+
+    return {
+        "array": prepared_array,
+        "adaptation_info": adaptation_info,
+        "input_metadata": input_metadata,
+        "window_start_sec": float(selection["window_start_sec"]),
+        "active_name": selection["active_name"],
+        "active_source_label": selection["active_source_label"],
+    }
+
+
+def get_preview_channel_names(processed: dict[str, object], standard_channel_names: list[str]) -> list[str]:
+    prepared_array = processed["array"]
+    input_metadata = processed["input_metadata"]
+    preview_channel_names = input_metadata.get("channel_names")
+    if not isinstance(preview_channel_names, list) or len(preview_channel_names) != prepared_array.shape[0]:
+        preview_channel_names = standard_channel_names[: prepared_array.shape[0]]
+    return preview_channel_names
+
+
+def render_case_eda_panel(
+    processed: dict[str, object],
+    standard_channel_names: list[str],
+    expected_sfreq: int,
+) -> None:
+    prepared_array = processed["array"]
+    input_metadata = processed["input_metadata"]
+    preview_channel_names = get_preview_channel_names(processed, standard_channel_names)
+
+    st.caption(f"{processed['active_name']} | {processed['active_source_label']}")
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Channels", str(prepared_array.shape[0]))
+    metric_cols[1].metric("Freq", f"{int(input_metadata.get('processed_sfreq', expected_sfreq))} Hz")
+    metric_cols[2].metric("Window", f"{processed['window_start_sec']:.1f} s")
+
+    trace_tab, band_tab, spectral_tab, corr_tab = st.tabs(["Trace", "Bands", "Spectral", "Connectivity"])
+    with trace_tab:
+        st.pyplot(
+            make_eeg_preview_figure(
+                prepared_array[: min(16, prepared_array.shape[0])],
+                preview_channel_names[: min(16, prepared_array.shape[0])],
+                float(input_metadata.get("processed_sfreq", expected_sfreq)),
+            ),
+            clear_figure=True,
+            width="stretch",
+        )
+    with band_tab:
+        st.pyplot(
+            make_window_bandpower_figure(
+                prepared_array[: min(16, prepared_array.shape[0])],
+                preview_channel_names[: min(16, prepared_array.shape[0])],
+                float(input_metadata.get("processed_sfreq", expected_sfreq)),
+            ),
+            clear_figure=True,
+            width="stretch",
+        )
+        st.pyplot(
+            make_channel_stats_figure(
+                prepared_array[: min(16, prepared_array.shape[0])],
+                preview_channel_names[: min(16, prepared_array.shape[0])],
+            ),
+            clear_figure=True,
+            width="stretch",
+        )
+    with spectral_tab:
+        st.pyplot(
+            make_spectrogram_figure(
+                prepared_array[: min(16, prepared_array.shape[0])],
+                preview_channel_names[: min(16, prepared_array.shape[0])],
+                float(input_metadata.get("processed_sfreq", expected_sfreq)),
+            ),
+            clear_figure=True,
+            width="stretch",
+        )
+    with corr_tab:
+        st.pyplot(
+            make_correlation_figure(
+                prepared_array[: min(16, prepared_array.shape[0])],
+                preview_channel_names[: min(16, prepared_array.shape[0])],
+            ),
+            clear_figure=True,
+            width="stretch",
+        )
+
+
+def render_case_model_panel(processed: dict[str, object], results: list[dict[str, object]]) -> None:
+    seizure_votes = sum(1 for result in results if result["prediction"] == "seizure")
+    st.caption(f"{processed['active_name']} | {processed['active_source_label']}")
+    if seizure_votes >= 1:
+        st.error(f"Seizure flagged by {seizure_votes}/{len(results)} models")
+    else:
+        st.success("Background across all model decisions")
+
+    result_df = pd.DataFrame(results)
+    display_df = result_df[["model_name", "background_prob", "seizure_prob", "threshold", "prediction"]].copy()
+    numeric_cols = ["background_prob", "seizure_prob", "threshold"]
+    styled_df = (
+        display_df.style
+        .format(
+            {
+                "background_prob": "{:.4f}",
+                "seizure_prob": "{:.4f}",
+                "threshold": "{:.2f}",
+            }
+        )
+        .background_gradient(cmap="RdYlGn", subset=numeric_cols, vmin=0.0, vmax=1.0)
+        .set_properties(subset=numeric_cols, **{"color": "#111827", "font-weight": "600"})
+    )
+    st.dataframe(styled_df, width="stretch")
+
+
+def run_all_model_predictions(
+    processed: dict[str, object],
+    feature_cfg: dict,
+    expected_sfreq: int,
+    model_names: list[str],
+) -> list[dict[str, object]]:
+    prepared_array = processed["array"]
+    input_metadata = processed["input_metadata"]
+    results: list[dict[str, object]] = []
+    for model_name in model_names:
+        if model_name == "tabnet_features":
+            results.append(
+                predict_tabnet_window(
+                    prepared_array,
+                    sfreq=float(input_metadata.get("processed_sfreq", expected_sfreq)),
+                    cfg=feature_cfg,
+                )
+            )
+        else:
+            results.append(predict_single_window(model_name, prepared_array))
+    return results
+
+
+def render_home_tab() -> None:
+    home_image = resolve_home_image_path()
+    hero_left, hero_right = st.columns([0.9, 1.1], vertical_alignment="center")
+    with hero_left:
+        st.markdown(
+            "### Seizures remain unpredictable — even the best systems miss up to 1 in 4 events and generate frequent false alarms."
+        )
+        st.write(
+            "Compare seizure and non-seizure EEG windows side by side in EDA and Modelling."
+        )
+    with hero_right:
+        if home_image is not None:
+            st.markdown('<div class="image-card">', unsafe_allow_html=True)
+            st.image(str(home_image), use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+        else:
+            st.info("Home image not found. Put `home_brain.png` in `src/streamlit/assets/` on the machine running Streamlit.")
+
+    st.markdown("### Comparison Focus")
+    comparison_cols = st.columns(2)
+    with comparison_cols[0]:
+        st.markdown("#### Seizure")
+        st.write(
+            "Inspect abrupt rhythmic activity, stronger spectral concentration, and model confidence on windows expected to contain seizure events."
+        )
+    with comparison_cols[1]:
+        st.markdown("#### Non-seizure")
+        st.write(
+            "Use a clean background window as the reference case for morphology, band power, channel relationships, and false-positive checks."
+        )
+
+
+def sync_selection_state(section_key: str, selection: dict[str, object] | None) -> None:
+    file_key_state = f"{section_key}_file_key"
+    processed_state = f"{section_key}_processed"
+    results_state = f"{section_key}_results"
+    new_file_key = selection.get("file_key") if selection is not None else None
+    if st.session_state.get(file_key_state) != new_file_key:
+        st.session_state[file_key_state] = new_file_key
+        st.session_state[processed_state] = None
+        st.session_state[results_state] = None
+
+
+def render_comparison_column(
+    section_key: str,
+    case_title: str,
+    mode: str,
+    project_cfg: dict,
+    feature_cfg: dict,
+    standard_channel_names: list[str],
+    expected_channels: int,
+    expected_samples: int,
+    expected_sfreq: int,
+    window_sec: float,
+    normalize: bool,
+    model_names: list[str],
+) -> None:
+    selection = render_case_selector(section_key, case_title, window_sec)
+    sync_selection_state(section_key, selection)
+
+    processed_state = f"{section_key}_processed"
+    results_state = f"{section_key}_results"
+    processed = st.session_state.get(processed_state)
+    results = st.session_state.get(results_state)
+
+    if selection is None:
+        return
+
+    if mode == "eda":
+        run_action = st.button("Load EDA comparison", key=f"{section_key}_run_eda", type="primary")
+        if run_action:
+            with st.spinner(f"Preparing {case_title.lower()} window..."):
+                try:
+                    st.session_state[processed_state] = process_case_selection(
+                        selection=selection,
+                        cfg=project_cfg,
+                        target_channels=expected_channels,
+                        target_samples=expected_samples,
+                        normalize=normalize,
+                    )
+                    processed = st.session_state[processed_state]
+                except Exception as exc:
+                    st.error(f"Could not prepare this case: {exc}")
+                    st.session_state[processed_state] = None
+                    processed = None
+
+        if processed is not None:
+            render_case_eda_panel(
+                processed=processed,
+                standard_channel_names=standard_channel_names,
+                expected_sfreq=expected_sfreq,
+            )
+        else:
+            st.info("Select a file and load this case to view EDA.")
+        return
+
+    run_action = st.button("Run model comparison", key=f"{section_key}_run_model", type="primary")
+    if run_action:
+        with st.spinner(f"Running models for {case_title.lower()}..."):
+            try:
+                processed = process_case_selection(
+                    selection=selection,
+                    cfg=project_cfg,
+                    target_channels=expected_channels,
+                    target_samples=expected_samples,
+                    normalize=normalize,
+                )
+                results = run_all_model_predictions(
+                    processed=processed,
+                    feature_cfg=feature_cfg,
+                    expected_sfreq=expected_sfreq,
+                    model_names=model_names,
+                )
+                st.session_state[processed_state] = processed
+                st.session_state[results_state] = results
+            except Exception as exc:
+                st.error(f"Could not run modelling for this case: {exc}")
+                st.session_state[processed_state] = None
+                st.session_state[results_state] = None
+                processed = None
+                results = None
+
+    if processed is not None and results is not None:
+        render_case_model_panel(processed=processed, results=results)
+    else:
+        st.info("Select a file and run this case to compare model outputs.")
+
+
+def render_comparison_tab(
+    mode: str,
+    project_cfg: dict,
+    feature_cfg: dict,
+    standard_channel_names: list[str],
+    expected_channels: int,
+    expected_samples: int,
+    expected_sfreq: int,
+    window_sec: float,
+    normalize: bool,
+    model_names: list[str],
+) -> None:
+    if mode == "eda":
+        st.write("Load one seizure example and one non-seizure example to compare their EEG structure side by side.")
+    else:
+        if not model_names:
+            st.warning("No saved model artifacts are available for comparison right now.")
+            return
+        st.write("Run all available models on one seizure window and one non-seizure window for direct prediction comparison.")
+
+    left_col, right_col = st.columns(2)
+    with left_col:
+        render_comparison_column(
+            section_key=f"{mode}_seizure",
+            case_title="Seizure Case",
+            mode=mode,
+            project_cfg=project_cfg,
+            feature_cfg=feature_cfg,
+            standard_channel_names=standard_channel_names,
+            expected_channels=expected_channels,
+            expected_samples=expected_samples,
+            expected_sfreq=expected_sfreq,
+            window_sec=window_sec,
+            normalize=normalize,
+            model_names=model_names,
+        )
+    with right_col:
+        render_comparison_column(
+            section_key=f"{mode}_non_seizure",
+            case_title="Non-seizure Case",
+            mode=mode,
+            project_cfg=project_cfg,
+            feature_cfg=feature_cfg,
+            standard_channel_names=standard_channel_names,
+            expected_channels=expected_channels,
+            expected_samples=expected_samples,
+            expected_sfreq=expected_sfreq,
+            window_sec=window_sec,
+            normalize=normalize,
+            model_names=model_names,
+        )
+
+
 def main():
     log_event("app rerun started")
     available_artifacts = list_available_artifacts()
     available_artifact_map = {item["model_name"]: item for item in available_artifacts}
+    local_checkpoint_models = set(list_local_checkpoint_model_names())
+    available_model_options = [
+        name for name in PREFERRED_MODEL_ORDER
+        if (
+            name == "tabnet_features"
+            or ((name in available_artifact_map or name in local_checkpoint_models) and name not in EXCLUDED_MODEL_KEYS)
+        )
+    ]
     project_cfg = load_project_config()
     feature_cfg = load_feature_config()
     standard_channel_names = get_standard_channel_names(project_cfg, fallback_count=16)
 
-    st.set_page_config(page_title="EEG Seizure Model Demo", layout="wide")
+    st.set_page_config(page_title="EEG Seizure Detection System", layout="wide")
     apply_app_theme()
     st.markdown(
         """
         <div class="eeg-shell">
-          <div class="hero-title">Neural Event Viewer</div>
-          <p class="hero-sub">Upload an EDF. Inspect the signal. Run seizure inference.</p>
+          <div class="hero-title">EEG Seizure Detection System</div>
+          <p class="hero-sub">Compare seizure and non-seizure EEG windows across exploration and modelling tabs.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -745,327 +1327,47 @@ def main():
     expected_sfreq = 256
     window_sec = expected_samples / expected_sfreq
     normalize = True
+    valid_checkpoint_models = set(available_artifact_map.keys()) | local_checkpoint_models
+    missing_models = [
+        name for name in available_model_options
+        if name != "tabnet_features" and name not in valid_checkpoint_models
+    ]
+    if missing_models:
+        st.warning(f"These saved model artifacts are not currently available: {', '.join(missing_models)}")
 
-    input_mode = st.radio(
-        "Input source",
-        options=["Upload from local", "Use server file"],
-        horizontal=True,
-    )
+    model_labels = ", ".join(get_model_label(name) for name in available_model_options)
+    if model_labels:
+        st.caption(f"Modelling compares these available models: {model_labels}")
 
-    uploaded = None
-    server_file_path: Path | None = None
-    if input_mode == "Upload from local":
-        uploaded = st.file_uploader(
-            "Upload one EDF file",
-            type=["edf"],
-            help="Upload a full EDF file. The app will extract one 1-second inference window.",
+    home_tab, eda_tab, modelling_tab = st.tabs(["Home", "EDA", "Modelling"])
+    with home_tab:
+        render_home_tab()
+    with eda_tab:
+        render_comparison_tab(
+            mode="eda",
+            project_cfg=project_cfg,
+            feature_cfg=feature_cfg,
+            standard_channel_names=standard_channel_names,
+            expected_channels=expected_channels,
+            expected_samples=expected_samples,
+            expected_sfreq=expected_sfreq,
+            window_sec=window_sec,
+            normalize=normalize,
+            model_names=available_model_options,
         )
-    else:
-        server_files = list_server_edf_files()
-        if server_files:
-            server_name = st.selectbox(
-                "Select a server EDF file",
-                options=[path.name for path in server_files],
-                help=f"Files are read directly from {SERVER_UPLOAD_DIR}",
-            )
-            server_file_path = next((path for path in server_files if path.name == server_name), None)
-        else:
-            st.warning(f"No EDF files found in {SERVER_UPLOAD_DIR}")
-
-    if "app_processed" not in st.session_state:
-        st.session_state["app_processed"] = None
-    if "app_results" not in st.session_state:
-        st.session_state["app_results"] = None
-    if "app_file_key" not in st.session_state:
-        st.session_state["app_file_key"] = None
-
-    if uploaded is None and server_file_path is None:
-        log_event("no file uploaded")
-        st.session_state["app_processed"] = None
-        st.session_state["app_results"] = None
-        st.session_state["app_file_key"] = None
-        st.info("Upload one EDF file or select a server file to inspect and prepare it.")
-    else:
-        file_bytes = b""
-        active_name = ""
-        active_source_label = ""
-        if uploaded is not None:
-            active_name = uploaded.name
-            active_source_label = "local_upload"
-            log_event(f"file uploaded name={uploaded.name}")
-            file_bytes = uploaded.getvalue()
-            file_key = f"upload:{uploaded.name}:{len(file_bytes)}"
-        else:
-            assert server_file_path is not None
-            active_name = server_file_path.name
-            active_source_label = "server_file"
-            stat = server_file_path.stat()
-            log_event(f"server file selected name={server_file_path.name}")
-            file_key = f"server:{server_file_path}:{stat.st_mtime_ns}:{stat.st_size}"
-        if st.session_state["app_file_key"] != file_key:
-            log_event("new uploaded file detected, clearing cached session state")
-            st.session_state["app_processed"] = None
-            st.session_state["app_results"] = None
-            st.session_state["app_file_key"] = file_key
-
-        try:
-            if uploaded is not None:
-                raw_duration = get_edf_duration(file_bytes, uploaded.name)
-            else:
-                raw_duration = get_edf_duration_from_path(str(server_file_path))
-            edf_window_max_start = max(0.0, raw_duration - window_sec)
-            window_input_cols = st.columns([1.3, 1.0])
-            with window_input_cols[0]:
-                window_start_sec = st.slider(
-                    "EDF window start (seconds)",
-                    min_value=0.0,
-                    max_value=float(edf_window_max_start),
-                    value=0.0,
-                    step=float(window_sec),
-                )
-            with window_input_cols[1]:
-                manual_window_start_sec = st.number_input(
-                    "Manual start (s)",
-                    min_value=0.0,
-                    max_value=float(edf_window_max_start),
-                    value=float(window_start_sec),
-                    step=float(window_sec),
-                    help="Type an exact start time in seconds for the selected inference window.",
-                )
-            window_start_sec = float(manual_window_start_sec)
-        except Exception as exc:
-            st.error(f"Could not parse the uploaded file: {exc}")
-            return
-
-        input_cols = st.columns([1.4, 1.0, 0.8])
-        with input_cols[0]:
-            st.metric("Recording", active_name)
-        with input_cols[1]:
-            st.metric("Duration", f"{raw_duration:.1f} s")
-        with input_cols[2]:
-            st.metric("Window", f"{window_sec:.1f} s")
-        st.caption(f"Source: {active_source_label}")
-
-        st.subheader("Run Inference")
-        selected_models = st.multiselect(
-            "Models to run",
-            options=["enhanced_cnn_1d", "multiscale_attention_cnn", "tabnet_features"],
-            default=["enhanced_cnn_1d", "multiscale_attention_cnn"],
-            format_func=lambda key: MODEL_PROFILES[key].label,
+    with modelling_tab:
+        render_comparison_tab(
+            mode="model",
+            project_cfg=project_cfg,
+            feature_cfg=feature_cfg,
+            standard_channel_names=standard_channel_names,
+            expected_channels=expected_channels,
+            expected_samples=expected_samples,
+            expected_sfreq=expected_sfreq,
+            window_sec=window_sec,
+            normalize=normalize,
+            model_names=available_model_options,
         )
-        action_cols = st.columns([0.9, 0.9, 2.2])
-        run_inference = action_cols[0].button("Predict", type="primary")
-        generate_visuals = action_cols[1].button("Show visuals")
-
-        if run_inference:
-            log_event("Predict button clicked")
-            if not selected_models:
-                st.warning("Select at least one model to run.")
-                return
-            with st.spinner("Preprocessing EDF window and running inference..."):
-                if uploaded is not None:
-                    prepared_array, adaptation_info, input_metadata = process_edf_upload(
-                        file_bytes=file_bytes,
-                        file_name=uploaded.name,
-                        cfg=project_cfg,
-                        target_channels=expected_channels,
-                        target_samples=expected_samples,
-                        window_start_sec=window_start_sec,
-                        normalize=normalize,
-                    )
-                else:
-                    assert server_file_path is not None
-                    prepared_array, adaptation_info, input_metadata = process_edf_path(
-                        edf_path=server_file_path,
-                        cfg=project_cfg,
-                        target_channels=expected_channels,
-                        target_samples=expected_samples,
-                        window_start_sec=window_start_sec,
-                        normalize=normalize,
-                    )
-                st.session_state["app_processed"] = {
-                    "array": prepared_array,
-                    "adaptation_info": adaptation_info,
-                    "input_metadata": input_metadata,
-                    "window_start_sec": window_start_sec,
-                }
-
-            results = []
-            missing_models = [name for name in selected_models if name != "tabnet_features" and name not in available_artifact_map]
-            if missing_models:
-                st.error(f"Missing saved artifacts for: {', '.join(missing_models)}")
-                return
-
-            for model_name in selected_models:
-                try:
-                    if model_name == "tabnet_features":
-                        results.append(
-                            predict_tabnet_window(
-                                prepared_array,
-                                sfreq=float(input_metadata.get("processed_sfreq", expected_sfreq)),
-                                cfg=feature_cfg,
-                            )
-                        )
-                    else:
-                        results.append(predict_single_window(model_name, prepared_array))
-                except Exception as exc:
-                    st.error(f"Failed to run {model_name}: {exc}")
-                    return
-            st.session_state["app_results"] = results
-
-        processed = st.session_state["app_processed"]
-        if processed is not None:
-            prepared_array = processed["array"]
-            input_metadata = processed["input_metadata"]
-            final_channels, final_samples = prepared_array.shape
-            preview_channel_names = input_metadata.get("channel_names")
-            if not isinstance(preview_channel_names, list) or len(preview_channel_names) != prepared_array.shape[0]:
-                preview_channel_names = standard_channel_names[: prepared_array.shape[0]]
-
-            metric_cols = st.columns(4)
-            metric_cols[0].metric("Channels", str(final_channels))
-            metric_cols[1].metric("Freq", f"{int(input_metadata.get('processed_sfreq', expected_sfreq))} Hz")
-            metric_cols[2].metric("Window Start", f"{processed['window_start_sec']:.1f} s")
-            metric_cols[3].metric("Samples", str(final_samples))
-
-            with st.expander("Processed window details", expanded=False):
-                st.write(
-                    {
-                        "uploaded_file": active_name,
-                        "source": active_source_label,
-                        "source_path": input_metadata.get("source_path", ""),
-                        "processed_channels": final_channels,
-                        "processed_sfreq": input_metadata.get("processed_sfreq", expected_sfreq),
-                        "window_start_sec": input_metadata.get("window_start_sec", 0.0),
-                        "channel_names": preview_channel_names,
-                    }
-                )
-
-        results = st.session_state["app_results"]
-        if results is not None:
-            seizure_votes = sum(1 for result in results if result["prediction"] == "seizure")
-            st.subheader("Prediction Result")
-            if seizure_votes >= 1:
-                st.error(f"SEIZURE detected by {seizure_votes}/{len(results)} model(s)")
-            else:
-                st.success("BACKGROUND / non-seizure")
-
-            prediction_cols = st.columns(len(results))
-            for col, result in zip(prediction_cols, results):
-                with col:
-                    st.markdown(f"**{MODEL_PROFILES[result['model_name']].label}**")
-                    if result["prediction"] == "seizure":
-                        st.error("Prediction: SEIZURE")
-                    else:
-                        st.success("Prediction: BACKGROUND")
-                    st.metric("Seizure probability", f"{result['seizure_prob']:.4f}")
-                    if result["model_name"] == "tabnet_features":
-                        st.caption(f"Features: {result['feature_count']}")
-
-            st.subheader("Detailed Results")
-            result_df = pd.DataFrame(results)
-            if "threshold" in result_df.columns:
-                result_df = result_df.drop(columns=["threshold"])
-            st.dataframe(result_df, width="stretch")
-            tabnet_rows = [row for row in results if row["model_name"] == "tabnet_features"]
-            if tabnet_rows:
-                with st.expander("TabNet feature preview", expanded=False):
-                    st.write(tabnet_rows[0]["feature_preview"])
-
-        if generate_visuals:
-            log_event("Show visuals button clicked")
-            if st.session_state["app_processed"] is None:
-                with st.spinner("Preprocessing EDF window for visualization..."):
-                    if uploaded is not None:
-                        prepared_array, adaptation_info, input_metadata = process_edf_upload(
-                            file_bytes=file_bytes,
-                            file_name=uploaded.name,
-                            cfg=project_cfg,
-                            target_channels=expected_channels,
-                            target_samples=expected_samples,
-                            window_start_sec=window_start_sec,
-                            normalize=normalize,
-                        )
-                    else:
-                        assert server_file_path is not None
-                        prepared_array, adaptation_info, input_metadata = process_edf_path(
-                            edf_path=server_file_path,
-                            cfg=project_cfg,
-                            target_channels=expected_channels,
-                            target_samples=expected_samples,
-                            window_start_sec=window_start_sec,
-                            normalize=normalize,
-                        )
-                    st.session_state["app_processed"] = {
-                        "array": prepared_array,
-                        "adaptation_info": adaptation_info,
-                        "input_metadata": input_metadata,
-                        "window_start_sec": window_start_sec,
-                    }
-            processed = st.session_state["app_processed"]
-            prepared_array = processed["array"]
-            input_metadata = processed["input_metadata"]
-            preview_channel_names = input_metadata.get("channel_names")
-            if not isinstance(preview_channel_names, list) or len(preview_channel_names) != prepared_array.shape[0]:
-                preview_channel_names = standard_channel_names[: prepared_array.shape[0]]
-
-            tab_trace, tab_bands, tab_spectral, tab_corr = st.tabs(
-                ["Trace", "Bands", "Spectral", "Connectivity"]
-            )
-            with tab_trace:
-                st.pyplot(
-                    make_eeg_preview_figure(
-                        prepared_array[: min(16, prepared_array.shape[0])],
-                        preview_channel_names[: min(16, prepared_array.shape[0])],
-                        float(input_metadata.get("processed_sfreq", expected_sfreq)),
-                    ),
-                    clear_figure=True,
-                    width="stretch",
-                )
-            with tab_bands:
-                left_col, right_col = st.columns([1.1, 1.0])
-                with left_col:
-                    st.pyplot(
-                        make_window_bandpower_figure(
-                            prepared_array[: min(16, prepared_array.shape[0])],
-                            preview_channel_names[: min(16, prepared_array.shape[0])],
-                            float(input_metadata.get("processed_sfreq", expected_sfreq)),
-                        ),
-                        clear_figure=True,
-                        width="stretch",
-                    )
-                with right_col:
-                    st.pyplot(
-                        make_channel_stats_figure(
-                            prepared_array[: min(16, prepared_array.shape[0])],
-                            preview_channel_names[: min(16, prepared_array.shape[0])],
-                        ),
-                        clear_figure=True,
-                        width="stretch",
-                    )
-            with tab_spectral:
-                st.pyplot(
-                    make_spectrogram_figure(
-                        prepared_array[: min(16, prepared_array.shape[0])],
-                        preview_channel_names[: min(16, prepared_array.shape[0])],
-                        float(input_metadata.get("processed_sfreq", expected_sfreq)),
-                    ),
-                    clear_figure=True,
-                    width="stretch",
-                )
-            with tab_corr:
-                st.pyplot(
-                    make_correlation_figure(
-                        prepared_array[: min(16, prepared_array.shape[0])],
-                        preview_channel_names[: min(16, prepared_array.shape[0])],
-                    ),
-                    clear_figure=True,
-                    width="stretch",
-                )
-
-    if st.session_state["app_processed"] is None:
-        st.info("Choose an EDF source, select a window, then click Predict.")
-        return
 
 
 if __name__ == "__main__":
