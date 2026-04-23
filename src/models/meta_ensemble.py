@@ -255,11 +255,16 @@ def _rank_average(stack: np.ndarray) -> np.ndarray:
     concentrated near 0.5 while another's saturate to 0/1). Ranks are mapped
     to [0, 1] via ``(r - 1) / (N - 1)``.
     """
-    n = stack.shape[1]
+    n = stack.shape[0]          # number of families
     if n < 2:
-        return stack.mean(axis=0)
-    # argsort(argsort(...)) yields the rank of each element along axis=1.
-    ranks = np.argsort(np.argsort(stack, axis=1), axis=1).astype(np.float64)
+        # Single family: rank-normalise across the samples dimension instead.
+        m = stack.shape[1]
+        if m < 2:
+            return stack.mean(axis=0)
+        ranks = np.argsort(np.argsort(stack, axis=1), axis=1).astype(np.float64)
+        return (ranks / (m - 1)).squeeze(0)
+    # Multiple families: rank each sample's probability across the family axis.
+    ranks = np.argsort(np.argsort(stack, axis=0), axis=0).astype(np.float64)
     return (ranks / (n - 1)).mean(axis=0)
 
 

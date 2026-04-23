@@ -147,7 +147,9 @@ def load_ensemble_from_checkpoints(
     models = []
     for builder, ckpt_path in zip(model_builders, checkpoint_paths):
         model = builder()
-        state = torch.load(ckpt_path, map_location=device, weights_only=True)
+        state = torch.load(ckpt_path, map_location=device, weights_only=False)
+        if isinstance(state, dict) and "model_state_dict" in state:
+            state = state["model_state_dict"]
         model.load_state_dict(state)
         model = model.to(device)
         models.append(model)
@@ -316,7 +318,7 @@ def _build_dataloaders(data_path: Path, batch_size: int):
 
     def _split(name: str) -> TensorDataset:
         data = torch.load(data_path / name / "data.pt", weights_only=True).float()
-        labels = torch.load(data_path / name / "labels.pt", weights_only=True).long().squeeze()
+        labels = torch.load(data_path / name / "labels.pt", weights_only=True).float().squeeze()
         return TensorDataset(data, labels)
 
     return (

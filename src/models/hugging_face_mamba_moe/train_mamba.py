@@ -114,7 +114,7 @@ def _run_training_loop(
     """Run training loop with optional MoE auxiliary loss until early stopping."""
     num_epochs = config["training"]["num_epochs"]
     is_moe = model_name == "eeg_mamba_moe"
-    moe_weight = config["models"]["hugging_face_mamba_moe"].get("moe_loss_weight", 0.01)
+    moe_weight = config["models"]["hugging_face_mamba_moe"].get("moe_loss_weight", 0.001)
     for epoch in range(num_epochs):
         train_loss = _train_one_epoch(model, train_loader, criterion, optimizer, config, device, is_moe, moe_weight)
         # NaN guard: if train loss diverges we must not keep looping — the
