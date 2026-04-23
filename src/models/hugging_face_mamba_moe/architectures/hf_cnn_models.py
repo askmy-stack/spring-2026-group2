@@ -397,8 +397,6 @@ class STEEGFormerPretrained(nn.Module):
             ) from exc
         state = load_file(hf_hub_download(repo_id=repo, filename=filename))
         missing, unexpected = self.load_state_dict(state, strict=False)
-        if unexpected:
-            raise RuntimeError(f"Unexpected ST-EEGFormer keys: {unexpected}")
         if self.channel_embed_mode == "mean":
             with torch.no_grad():
                 mean_emb = self.enc_channel_emd.channel_transformation.weight.mean(dim=0, keepdim=True)
