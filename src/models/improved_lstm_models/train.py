@@ -108,7 +108,12 @@ def train_improved(data_path: Path, config: Dict) -> Dict:
     _run_training_loop(model, train_loader, val_loader, augmenter, criterion, optimizer, scheduler, stopper, config, device)
     best_ckpt = ckpt_dir / "improved_lstm_best.pt"
     if best_ckpt.exists():
-        model.load_state_dict(torch.load(best_ckpt, map_location=device, weights_only=True))
+        # Unified checkpoints store a full payload dict; pull state_dict out of it.
+        # Previously we passed the whole payload to load_state_dict which crashed
+        # because it contains non-tensor metadata (epoch, optimizer_state_dict, …).
+        payload = torch.load(best_ckpt, map_location=device, weights_only=False)
+        state_dict = payload.get("model_state_dict", payload)
+        model.load_state_dict(state_dict)
         logger.info("Loaded best checkpoint for threshold tuning and test evaluation.")
 
     val_probs, val_labels = _collect_probs(model, val_loader, device)
@@ -127,6 +132,8 @@ def train_improved(data_path: Path, config: Dict) -> Dict:
         epoch=config["training"]["num_epochs"],
         val_metrics=val_metrics,
         optimal_threshold=threshold,
+        input_spec={"channels": data_cfg["n_channels"], "time_steps": data_cfg["time_steps"]},
+        preprocess=config.get("preprocess", {}),
     )
     return _evaluate_improved_on_test(model, test_loader, device, threshold=threshold)
 

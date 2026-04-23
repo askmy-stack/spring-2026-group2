@@ -85,6 +85,9 @@ def _train_single_model(args: argparse.Namespace) -> None:
     config_path = Path(args.config_path).resolve()
     results_root, ckpt_dir, logs_dir = _setup_dirs(args, config_path)
     train_dl, val_dl, test_dl, channels, samples, sfreq = _load_data(args, config_path)
+    args.channels = channels
+    args.samples = samples
+    args.sfreq = sfreq
     # Resolve smoothing_mode="auto" before passing into training/eval so the
     # test-time smoothing matches the threshold tuning done on val.
     args.smoothing_mode = _resolve_smoothing_mode(args.model, args.smoothing_mode)
