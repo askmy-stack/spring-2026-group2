@@ -57,7 +57,7 @@ def create_hf_model(name: str, **kwargs) -> nn.Module:
         **kwargs: Constructor keyword arguments; unknown keys are silently dropped.
 
     Returns:
-        Instantiated nn.Module.
+        Instantiated nn.Module, or None if incompatible (channel mismatch).
 
     Raises:
         ValueError: If name is not in HF_MODEL_REGISTRY.
@@ -73,7 +73,13 @@ def create_hf_model(name: str, **kwargs) -> nn.Module:
     valid = inspect.signature(cls.__init__).parameters
     filtered = {k: v for k, v in kwargs.items() if k in valid}
     logger.debug("Creating %s with kwargs: %s", key, filtered)
-    return cls(**filtered)
+    try:
+        return cls(**filtered)
+    except ValueError as e:
+        if "channels" in str(e).lower():
+            logger.warning("Skipping %s: %s", key, e)
+            return None
+        raise
 
 
 def list_hf_models() -> list[str]:
