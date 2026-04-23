@@ -309,11 +309,17 @@ def main() -> None:
     """CLI entry point for Mamba/MoE training."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(description="Train EEG Mamba or Mamba-MoE")
-    parser.add_argument("--model", default="eeg_mamba", choices=list(MODEL_REGISTRY.keys()))
+    parser.add_argument("--model", default="eeg_mamba", choices=["all"] + list(MODEL_REGISTRY.keys()))
     parser.add_argument("--data_path", default="src/data/processed/chbmit")
     parser.add_argument("--config", default="src/models/config.yaml")
     args = parser.parse_args()
     config = load_config(Path(args.config))
+    if args.model == "all":
+        for model_name in MODEL_REGISTRY.keys():
+            logger.info("Training model: %s", model_name)
+            results = train_mamba(model_name, Path(args.data_path), config)
+            logger.info("Test results for %s: %s", model_name, results)
+        return
     results = train_mamba(args.model, Path(args.data_path), config)
     logger.info("Test results: %s", results)
 
