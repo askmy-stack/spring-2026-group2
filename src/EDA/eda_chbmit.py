@@ -402,7 +402,7 @@ for i, (ax_, ch) in enumerate(zip(axes_flat, ch_names)):
     for (band, (lo, hi)), bc in zip(FREQ_BANDS.items(), colors):
         ax_.axvspan(lo, hi, alpha=0.25, color=bc)
         mask = (freqs >= lo) & (freqs <= hi)
-        band_power[band].append(float(np.trapz(psd[mask], freqs[mask])))
+        band_power[band].append(float(np.trapezoid(psd[mask], freqs[mask])))
 
 # hide empty subplots
 for ax_ in list(axes_flat)[n_ch:]:
