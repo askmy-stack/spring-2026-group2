@@ -1,21 +1,63 @@
+# ── Virtual environment ────────────────────────────────────────────────────
 .venv/
-.idea/
-__pycache__/
-*.pyc
-.DS_Store
+venv/
+env/
 
-outputs/
+# ── Raw EEG data (large binary files) ─────────────────────────────────────
+data/
+data_raw/
+src/data_raw/
+seizure_system/data/
+*.edf
+*.fif
+*.bdf
+
+# ── Results & outputs (generated, not source) ──────────────────────────────
 results/
 src/results/
-src/results_biot/
-src/data/
-data/
-uploads/
 
-*.log
-*.edf
+# ── Model artifacts ────────────────────────────────────────────────────────
 *.pt
 *.pth
-*.ckpt
-Code Review Guidelines.pdf
-wget-log
+*.pkl
+*.joblib
+
+# ── Memory-mapped arrays ───────────────────────────────────────────────────
+*.dat
+*.npy
+*.npz
+
+# ── Logs ───────────────────────────────────────────────────────────────────
+*.log
+debug_session_log.txt
+
+# ── Jupyter ────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Python cache ───────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# ── IDE ────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── OS ─────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Optuna DB ──────────────────────────────────────────────────────────────
+*.db
+
+# ── Feature extraction checkpoints ─────────────────────────────────────────
+checkpoints_*/
+
+# ── Word documents ────────────────────────────────────────────────────────
+*.docx

@@ -1,0 +1,47 @@
+experiment_name: baseline_lightgbm
+model_type: lightgbm
+target_col: label
+
+paths:
+  train_csv: ../../results/features_raw/features_train.csv
+  val_csv: ../../results/features_raw/features_val.csv
+  test_csv: ../../results/features_raw/features_test.csv
+  output_dir: ../../results/modeling/lightgbm/baseline
+
+data:
+  meta_cols:
+    - path
+    - start_sec
+    - end_sec
+    - label
+    - recording_path
+    - subject_id
+    - age
+    - sex
+    - subject
+    - window_idx
+    - start
+    - end
+  dtype: float32
+
+training:
+  use_gpu: true
+  random_state: 42
+
+model_params:
+  device: gpu
+  random_state: 42
+
+evaluation:
+  default_threshold: 0.5
+
+plots:
+  save_pr_curve: true
+  save_roc_curve: true
+  save_threshold_plot: true
+  save_confusion_matrix: true
+  save_feature_importance: true
+
+optuna:
+  n_trials: 50
+  direction: maximize
