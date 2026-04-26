@@ -161,10 +161,14 @@ def _consolidate_split(chunk_dir: Path, split_dir: Path) -> None:
 
     data_parts: List[torch.Tensor] = []
     label_parts: List[torch.Tensor] = []
+    subj_parts: List[torch.Tensor] = []
     for chunk_path in chunk_files:
         payload = torch.load(chunk_path, weights_only=True)
         data_parts.append(payload["data"])
         label_parts.append(payload["labels"])
+        m = re.search(r"\d+", chunk_path.stem)
+        subj_id = int(m.group()) if m else hash(chunk_path.stem) % 10000
+        subj_parts.append(torch.full((len(payload["data"]),), subj_id, dtype=torch.long))
 
     data = torch.cat(data_parts, dim=0)
     labels = torch.cat(label_parts, dim=0)
@@ -173,6 +177,7 @@ def _consolidate_split(chunk_dir: Path, split_dir: Path) -> None:
     split_dir.mkdir(parents=True, exist_ok=True)
     torch.save(data, split_dir / "data.pt")
     torch.save(labels, split_dir / "labels.pt")
+    torch.save(torch.cat(subj_parts), split_dir / "subject_ids.pt")
     n_seizure = int(labels.sum().item())
     logger.info(
         "Consolidated %s: %d windows (%d seizure, %.2f%%) -> %s",
