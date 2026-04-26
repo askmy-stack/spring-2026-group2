@@ -1,63 +1,54 @@
-# ── Virtual environment ────────────────────────────────────────────────────
-.venv/
-venv/
-env/
-
-# ── Raw EEG data (large binary files) ─────────────────────────────────────
-data/
-data_raw/
-src/data_raw/
-seizure_system/data/
-*.edf
-*.fif
-*.bdf
-
-# ── Results & outputs (generated, not source) ──────────────────────────────
-results/
-src/results/
-
-# ── Model artifacts ────────────────────────────────────────────────────────
-*.pt
-*.pth
-*.pkl
-*.joblib
-
-# ── Memory-mapped arrays ───────────────────────────────────────────────────
-*.dat
-*.npy
-*.npz
-
-# ── Logs ───────────────────────────────────────────────────────────────────
-*.log
-debug_session_log.txt
-
-# ── Jupyter ────────────────────────────────────────────────────────────────
-.ipynb_checkpoints/
-
-# ── Python cache ───────────────────────────────────────────────────────────
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 *.egg-info/
-dist/
-build/
+.pytest_cache/
+.ipynb_checkpoints/
 
-# ── IDE ────────────────────────────────────────────────────────────────────
-.idea/
+# Virtual envs
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
 .vscode/
 *.swp
-*.swo
+*~
 
-# ── OS ─────────────────────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
+# Trained models & large artefacts — never push weights
+outputs/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
 
-# ── Optuna DB ──────────────────────────────────────────────────────────────
-*.db
+# Processed data (regenerate from raw)
+src/data/processed/
+src/results/
 
-# ── Feature extraction checkpoints ─────────────────────────────────────────
-checkpoints_*/
+# Logs
+*.log
+logs/
 
-# ── Word documents ────────────────────────────────────────────────────────
-*.docx
+# Caching
+*.npz
+*.npy
+.cache/
+
+# IDE / local tooling
+.idea/
+.serena/
+
+# Local report generation scripts
+generate_changes_pdf.py
+generate_final_report.py
+generate_model_status_report.py
+
+# Local report artifacts
+CHECKPOINT_VALIDATION_REPORT.md
+MODEL_STATUS_REPORT_APR23_2026.pdf
+
+

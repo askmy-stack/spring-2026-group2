@@ -1,0 +1,881 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EEG Seizure Detection — Modeling Pipeline Research Draft</title>
+<style>
+@page { size: Letter; margin: 0.85in 0.9in; }
+html { font-size: 10.5pt; }
+body {
+  font-family: "Charter", "Georgia", "Times New Roman", serif;
+  color: #111;
+  line-height: 1.45;
+  max-width: 100%;
+}
+h1, h2, h3, h4 {
+  font-family: "Helvetica Neue", "Arial", sans-serif;
+  color: #0b2545;
+  line-height: 1.2;
+  page-break-after: avoid;
+}
+h1 { font-size: 1.9rem; border-bottom: 2px solid #0b2545; padding-bottom: .25rem; margin-top: 0; }
+h2 { font-size: 1.35rem; border-bottom: 1px solid #c8d3e0; padding-bottom: .15rem; margin-top: 1.6rem; }
+h3 { font-size: 1.1rem; margin-top: 1.2rem; }
+h4 { font-size: 1.0rem; margin-top: 1.0rem; }
+p { margin: 0.5rem 0; text-align: justify; }
+code {
+  font-family: "Menlo", "Monaco", "Courier New", monospace;
+  font-size: 0.88em;
+  background: #f4f4f6;
+  padding: 1px 4px;
+  border-radius: 3px;
+  color: #b03a2e;
+}
+pre {
+  background: #f7f8fa;
+  border: 1px solid #dde2e8;
+  border-radius: 4px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 0.82em;
+  line-height: 1.35;
+  page-break-inside: avoid;
+}
+pre code { background: none; color: #111; padding: 0; }
+table {
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.88em;
+  page-break-inside: avoid;
+}
+th, td {
+  border: 1px solid #c8d3e0;
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #eef2f7; font-weight: 600; }
+tr:nth-child(even) td { background: #fafbfc; }
+blockquote {
+  border-left: 3px solid #0b2545;
+  margin: 0.8rem 0;
+  padding: 0.1rem 0.9rem;
+  color: #333;
+  background: #f6f8fb;
+  page-break-inside: avoid;
+}
+ul, ol { margin: 0.4rem 0 0.4rem 1.3rem; }
+li { margin: 0.15rem 0; }
+hr { border: 0; border-top: 1px solid #c8d3e0; margin: 1.2rem 0; }
+a { color: #1a4a8a; text-decoration: none; }
+.math { font-family: "Latin Modern Math", "Cambria Math", serif; }
+.footer-note { color: #666; font-size: 0.85em; }
+</style>
+</head>
+<body>
+<h1 id="eeg-seizure-detection-a-comparative-study-of-lstm-cnn-lstm-transformer-and-state-space-architectures">EEG Seizure Detection: A Comparative Study of LSTM, CNN-LSTM, Transformer, and State-Space Architectures</h1>
+<p><strong>Research-paper draft synthesized from the <code>spring-2026-group2</code> codebase.</strong>
+Branch: <code>abhinaysai-lstm</code> · Date: 2026-04-16 · Source root: <code>src/</code></p>
+<blockquote>
+<p>This document is a paper-ready methodology + results synthesis. Every architectural and training claim is cited to source (<code>file:line</code>). Numeric results are sourced from on-disk artifacts only; checkpoints that lack persisted test metrics are flagged explicitly as gaps to re-run.</p>
+</blockquote>
+<hr>
+<h2 id="abstract">Abstract</h2>
+<p>We present a unified comparative study of 15+ neural architectures for automated seizure detection on scalp EEG, evaluated on the CHB-MIT pediatric corpus. All models share a common preprocessing, windowing, and subject-independent splitting pipeline (<code>src/data_loader/</code>), enabling an apples-to-apples comparison across four architecture families: (i) recurrent models (Vanilla LSTM, BiLSTM, Attention-BiLSTM, Feature-BiLSTM), (ii) convolutional–recurrent hybrids (CNN-LSTM with multi-scale temporal kernels), (iii) self-attention / vector-quantised transformers (VQ-Transformer "M7"), and (iv) state-space and pretrained foundation models (EEGMamba, BENDR, EEGPT). Training uses Focal Loss with positive-class re-weighting, AdamW with warmup-cosine learning-rate scheduling, threshold tuning via Youden's J or F1-max, and ensemble voting for the HF-model family. On the legacy baseline evaluation the CNN-LSTM hybrid achieves F1 = 0.518 / AUC = 0.712 with sensitivity = 0.569, substantially outperforming the pure LSTM (F1 = 0.346, sensitivity = 0.314) and motivating the later additions of multi-scale CNN frontends, hierarchical context, and pretrained encoders. This document unifies the methodology, hyperparameters, stability fixes, and iteration history into a single reference.</p>
+<hr>
+<h2 id="1-introduction">1. Introduction</h2>
+<p>Seizure detection from scalp EEG is a dense temporal-classification problem characterised by (a) severe class imbalance (seizures are rare), (b) inter-subject heterogeneity (age, montage, seizure type), (c) non-stationary signal statistics, and (d) a strong demand for subject-independent generalisation in clinical deployment. This codebase tackles the problem with a unified pipeline feeding a wide portfolio of architectures. The explicit research question we attempt to answer: <em>how do different inductive biases (recurrence, multi-scale convolution, self-attention, state-space dynamics, large-scale self-supervised pretraining) compare when held to the same preprocessing, labelling, and evaluation protocol?</em></p>
+<p>Scope and contributions:
+1. <strong>A unified, subject-independent pipeline</strong> (CHB-MIT → 16-channel 10-20 montage, 256 Hz, 1-s windows) implemented in <code>src/data_loader/</code>.
+2. <strong>15+ architectures</strong> under one repo with shared loss/metrics utilities (<code>src/models/utils/</code>).
+3. <strong>A documented stability history</strong> — a sequence of fixes for NaN losses, FP16 underflow, gradient amplification in state-space layers, and class-weighting semantics — which constitutes an engineering contribution in its own right.
+4. <strong>Ensemble evaluation</strong> (<code>ensemble_hf.py</code>) with per-ensemble threshold tuning.</p>
+<hr>
+<h2 id="2-end-to-end-modeling-pipeline">2. End-to-End Modeling Pipeline</h2>
+<p>All models consume batches produced by <code>data_loader.dataset.factory.create_pytorch_dataloaders()</code>, which composes the stages below.</p>
+<h3 id="21-pipeline-diagram">2.1 Pipeline diagram</h3>
+<pre><code>PhysioNet CHB-MIT EDF
+        │   (download.py:50-85)
+        ▼
+   MNE read_raw             ──► sfreq, n_channels, duration
+        │   (io.py:75-81)
+        ▼
+   preprocess()
+   pick-EEG → resample(256Hz, polyphase) → bandpass 1–50Hz
+   → notch 60Hz → average reference
+        │   (signal.py:12-82)
+        ▼
+   standardize_channels()   → 16-ch 10-20 montage
+        │   (channels.py:39-138)
+        ▼
+   BIDS rewrite             → sub-XX/ses-001/eeg/*.edf + sidecars
+        │   (bids.py:25-…)
+        ▼
+   build_window_index()     → 1-s windows, 1-s stride
+   label_windows()          → positive if ≥50% overlap with seizure event
+        │   (labels.py:11-181)
+        ▼
+   stratify_subjects()      → 70/15/15 subject-independent splits
+        │   (stratify.py:9-84)
+        ▼
+   balance_index() [train only] → oversample to 30 % positive
+        │   (labels.py:184-210)
+        ▼
+   EEGDataset.__getitem__() → per-channel z-score + random augmentations
+        │   (loaders.py:57-60, augment.py:9-68)
+        ▼
+   PyTorch DataLoader       → (B, 16, 256), (B,)
+</code></pre>
+<h3 id="22-data-acquisition">2.2 Data acquisition</h3>
+<p>Source: CHB-MIT Scalp EEG Database (PhysioNet). Subject metadata (age, sex, 23 recordings / 22 subjects, ages 1.5–22) is hard-coded in <code>data_loader/core/download.py</code> (<code>CHBMIT_SUBJECTS</code>, lines 22–47); downloader <code>download_chbmit()</code> at lines 50–85 fetches all 664 EDF files into a local cache. File reading is handled by <code>read_raw()</code> at <code>data_loader/core/io.py:75-81</code> via MNE-Python (supports <code>.edf</code>, <code>.bdf</code>, <code>.vhdr</code>, <code>.set</code>, <code>.fif</code>).</p>
+<h3 id="23-preprocessing-coresignalpy">2.3 Preprocessing (<code>core/signal.py</code>)</h3>
+<p><code>preprocess()</code> (lines 12–18) chains:
+1. <strong>EEG-channel pick</strong> (<code>_pick_eeg</code>, 21–32): MNE channel type filter with fallback to "all channels" when <code>ch_types</code> are unset.
+2. <strong>Resample to 256 Hz</strong> (<code>_resample</code>, 35–46) via polyphase filtering (<code>_resample_polyphase</code>, 49–62) — the default path; SciPy-style GCD decomposition minimises phase distortion relative to naive linear interpolation.
+3. <strong>Bandpass 1–50 Hz</strong> and <strong>notch at 60 Hz</strong> (<code>_filter</code>, 65–73).
+4. <strong>Average reference</strong> (<code>_reference</code>, 76–82).</p>
+<p>Per-channel z-score normalisation (<code>signal.py:85-90</code>) is deliberately deferred to the dataset <code>__getitem__</code> (<code>loaders.py:57-60</code>) so statistics are computed per window, avoiding leakage across train/val/test boundaries.</p>
+<h3 id="24-channel-standardisation-corechannelspy">2.4 Channel standardisation (<code>core/channels.py</code>)</h3>
+<p>Target montage is the 16-channel subset of the 10-20 system: Fp1, Fp2, F3, F4, F7, F8, Fz, Cz, T7, T8, P7, P8, C3, C4, O1, O2 (lines 9–10). <code>standardize_channels()</code> (39–52) reduces over-count recordings by case-insensitive name match then spatial nearest-neighbour (<code>_reduce_to_target</code>, 55–87) and expands under-count recordings via duplication (<code>_expand_to_target</code>, 108–126), finishing with a canonical reorder (129–138). Spatial matching uses a hard-coded <code>POSITIONS_1020</code> dict (12–36).</p>
+<h3 id="25-windowing-labelling-corelabelspy">2.5 Windowing &amp; labelling (<code>core/labels.py</code>)</h3>
+<p><code>build_window_index()</code> (153–181) produces non-overlapping 1-s windows at 256 Hz (⇒ 256 samples/window). <code>label_windows()</code> (11–42) tags a window positive if its temporal overlap with any seizure event is at least <code>labeling.overlap_threshold</code> (default 0.5). Seizure events are parsed from BIDS-style <code>_events.tsv</code> companions (107–133) using keyword match against {<code>seizure</code>, <code>sz</code>, <code>ictal</code>, <code>epilep</code>}. Negative windows within <code>windowing.exclude_negatives_within_sec = 300 s</code> of any seizure are discarded to prevent borderline-labelled background from contaminating the negative class (36–37).</p>
+<h3 id="26-subject-independent-stratified-split-corestratifypy">2.6 Subject-independent stratified split (<code>core/stratify.py</code>)</h3>
+<p><code>stratify_subjects()</code> (9–84) bins subjects by age (0–5, 5–10, 10–15, 15–20, 20–30, 30+), tracks seizure status per stratum, and greedily allocates subjects into train/val/test at the 70/15/15 ratio while preserving both age- and seizure-prevalence distributions. <code>assign_split_column()</code> (126–149) writes the split back onto the window index so no window can leak across splits.</p>
+<h3 id="27-class-imbalance-handling-at-dataset-level-corelabelspy184-210">2.7 Class-imbalance handling at dataset level (<code>core/labels.py:184-210</code>)</h3>
+<p><code>balance_index()</code> oversamples positives on the <strong>train split only</strong> until the positive ratio meets <code>balance.seizure_ratio = 0.3</code>. Validation and test splits retain the natural distribution so evaluation is unbiased.</p>
+<h3 id="28-augmentation-coreaugmentpy9-68">2.8 Augmentation (<code>core/augment.py:9-68</code>)</h3>
+<p>Four stochastic augmentations applied at load time:
+- <strong>Time warp</strong> (cubic-spline, σ = 0.15) — non-linear time distortion.
+- <strong>Per-channel magnitude scale</strong> (σ = 0.15) — amplitude variation.
+- <strong>Additive Gaussian noise</strong> at 25 dB SNR.
+- <strong>Time shift</strong> up to ±15 samples (~59 ms at 256 Hz).</p>
+<p>Seizure windows are augmented with probability 0.8 and background with 0.3, biasing augmentation toward the minority class.</p>
+<h3 id="29-two-parallel-data-subsystems">2.9 Two parallel data subsystems</h3>
+<p>The repo currently hosts both <code>src/dataloaders/</code> (legacy, <code>dataloaders/common/{windowing,loader,splits}.py</code>) and <code>src/data_loader/</code> (modern, YAML-configured, BIDS-aware). Both honour identical output contracts. The legacy path is preserved for reproducibility of baseline results on disk; new work targets <code>data_loader/</code>. A future revision should collapse the two.</p>
+<hr>
+<h2 id="3-model-architectures">3. Model Architectures</h2>
+<p>All models are defined under <code>src/models/</code>. The master inventory is in Table 1; per-family detail follows.</p>
+<h3 id="table-1-architecture-inventory">Table 1 — Architecture inventory</h3>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Name</th>
+<th>Family</th>
+<th>File:line</th>
+<th>~Params</th>
+<th>Input</th>
+<th>Key feature</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><code>VanillaLSTM</code></td>
+<td>LSTM</td>
+<td><code>architectures/vanilla_lstm.py:47-122</code></td>
+<td>180 K</td>
+<td>16×256</td>
+<td>ChannelAttn + uni-LSTM</td>
+</tr>
+<tr>
+<td>2</td>
+<td><code>BiLSTM</code></td>
+<td>BiLSTM</td>
+<td><code>architectures/bilstm.py:44-113</code></td>
+<td>300 K</td>
+<td>16×256</td>
+<td>ChannelAttn + BiLSTM</td>
+</tr>
+<tr>
+<td>3</td>
+<td><code>AttentionBiLSTM</code></td>
+<td>BiLSTM + MHA</td>
+<td><code>architectures/attention_bilstm.py:19-130</code></td>
+<td>330 K</td>
+<td>16×256</td>
+<td>Learned pos-emb + 4-head self-attn</td>
+</tr>
+<tr>
+<td>4</td>
+<td><code>FeatureBiLSTM</code></td>
+<td>BiLSTM on features</td>
+<td><code>architectures/feature_bilstm.py:19-139</code></td>
+<td>280 K</td>
+<td>226×10</td>
+<td>Residual proj + temporal MHA</td>
+</tr>
+<tr>
+<td>5</td>
+<td><code>CNNLSTM</code></td>
+<td>CNN + BiLSTM</td>
+<td><code>architectures/cnn_lstm.py:74-186</code></td>
+<td>480 K</td>
+<td>16×256</td>
+<td>3-kernel CNN (3/15/31) + BiLSTM + MHA</td>
+</tr>
+<tr>
+<td>6–11</td>
+<td><code>M1…M6</code></td>
+<td>LSTM benchmark suite</td>
+<td><code>lstm_benchmark_models/architectures/m[1-6]_*.py</code></td>
+<td>180–480 K</td>
+<td>16×256</td>
+<td>Channel / criss-cross / graph attn variants</td>
+</tr>
+<tr>
+<td>12</td>
+<td><code>HierarchicalLSTM</code></td>
+<td>2-level BiLSTM</td>
+<td><code>improved_lstm_models/architectures/hierarchical_lstm.py:60-136</code></td>
+<td>320 K</td>
+<td>60×16×256</td>
+<td>Window encoder → cross-window BiLSTM</td>
+</tr>
+<tr>
+<td>13</td>
+<td><code>M7_VQTransformer</code></td>
+<td>Patch-Transformer + VQ</td>
+<td><code>ensemble_transformers/architectures/m7_vq_transformer.py:13-104</code></td>
+<td>420 K</td>
+<td>16×256</td>
+<td>Patch embed + 4-layer Transformer + 512-code VQ</td>
+</tr>
+<tr>
+<td>14</td>
+<td><code>EEGMamba</code></td>
+<td>SSM</td>
+<td><code>hugging_face_mamba_moe/architectures/eeg_mamba.py:21-80</code></td>
+<td>280 K</td>
+<td>16×256</td>
+<td>Bidirectional Mamba blocks</td>
+</tr>
+<tr>
+<td>15</td>
+<td><code>EEGMambaMoE</code></td>
+<td>SSM + MoE</td>
+<td><code>hugging_face_mamba_moe/architectures/eeg_mamba.py</code></td>
+<td>~320 K</td>
+<td>16×256</td>
+<td>Mamba + mixture-of-experts router</td>
+</tr>
+<tr>
+<td>16</td>
+<td><code>BENDRPretrainedModel</code></td>
+<td>Pretrained CNN</td>
+<td><code>hugging_face_mamba_moe/architectures/pretrained/bendr.py:11-60</code></td>
+<td>~M (frozen)</td>
+<td>16×256</td>
+<td>Braindecode BENDR backbone</td>
+</tr>
+<tr>
+<td>17</td>
+<td><code>EEGPTPretrainedModel</code></td>
+<td>Pretrained Transformer</td>
+<td><code>hugging_face_mamba_moe/architectures/pretrained/eegpt.py:11-57</code></td>
+<td>~25 M (frozen)</td>
+<td>16×256</td>
+<td><code>chs_info=None</code> adapter head</td>
+</tr>
+<tr>
+<td>18</td>
+<td><code>TinySeizureNet</code></td>
+<td>Depthwise-separable CNN</td>
+<td><code>approach3/architectures/tiny_seizure_net.py</code></td>
+<td>&lt; 1 M</td>
+<td>16×256</td>
+<td>Distilled from M1–M6 teachers</td>
+</tr>
+</tbody>
+</table>
+<h3 id="31-lstm-family-shared-blueprint">3.1 LSTM family — shared blueprint</h3>
+<p>All LSTM models follow the pattern <code>ChannelAttention → LayerNorm → Linear(16→128) → LSTM → Dual(Mean+Max)Pool → FC</code>. Design rationale:</p>
+<ul>
+<li><strong>ChannelAttention (<code>lstm_benchmark_models/modules/channel_attention.py</code>)</strong> — squeeze-and-excitation over channels. EEG channels carry very different amounts of seizure information; a learned gating vector suppresses noisy or artifact channels before temporal processing.</li>
+<li><strong>Input projection to 128-dim hidden space</strong> — decouples LSTM capacity from raw channel count (important because the pipeline can emit 16 or 23 channels depending on fallback).</li>
+<li><strong>Dual pooling (Mean + Max)</strong> — mean captures global activity level; max captures peaky ictal bursts. Concatenation doubles the feature dimension fed to the classifier.</li>
+<li><strong>Dropout 0.3 between LSTM layers</strong> — primary regulariser. Weight decay is the secondary one.</li>
+</ul>
+<h4 id="vanillalstm-vanilla_lstmpy47-122">VanillaLSTM (<code>vanilla_lstm.py:47-122</code>)</h4>
+<ul>
+<li>2-layer unidirectional LSTM, hidden 128, dropout 0.3.</li>
+<li>Acts as a reference floor: no bidirectionality, no self-attention, no CNN frontend.</li>
+</ul>
+<h4 id="bilstm-bilstmpy44-113">BiLSTM (<code>bilstm.py:44-113</code>)</h4>
+<ul>
+<li>2-layer bidirectional LSTM; forward + backward hidden states concatenated → 256-dim per timestep.</li>
+<li>Within a 1-s window, the "future" is visible at training and inference — a reasonable assumption for offline seizure detection and a small assumption for clinical systems that buffer a few seconds of signal.</li>
+</ul>
+<h4 id="attentionbilstm-attention_bilstmpy19-130">AttentionBiLSTM (<code>attention_bilstm.py:19-130</code>)</h4>
+<ul>
+<li>BiLSTM → <strong>learnable positional embedding (trunc-normal init)</strong> → 4-head self-attention with residual → pool.</li>
+<li>The positional embedding is important: once we add self-attention on top of an RNN, the attention block itself is permutation-invariant, so position must be re-injected.</li>
+</ul>
+<h4 id="featurebilstm-feature_bilstmpy19-139">FeatureBiLSTM (<code>feature_bilstm.py:19-139</code>)</h4>
+<ul>
+<li>Unlike the other LSTMs, this consumes <strong>226 hand-crafted features per window over a sequence of 10 windows</strong> (i.e. 10 s context). A residual projection 226 → 256 → 128 stabilises training under very small effective batch sizes, and a 4-head temporal MHA learns which of the 10 windows is most discriminative.</li>
+<li>Intended as a "tabular-features" baseline alongside the raw-waveform models.</li>
+</ul>
+<h4 id="cnnlstm-cnn_lstmpy74-186">CNNLSTM (<code>cnn_lstm.py:74-186</code>)</h4>
+<ul>
+<li>Three parallel conv branches with kernel sizes <strong>3 / 15 / 31</strong> mimic the three clinical EEG time-scales: fast spikes, spike-wave complexes, and slow ictal rhythms.</li>
+<li>Branch A (32 ch, k = 3, stride = 2) + Branch B (64 ch, k = 15, stride = 2) + Branch C (64 ch, k = 31, stride = 1, then downsample) → concat to 160 ch → BiLSTM → MHA → dual pool.</li>
+<li>This is the architecture that produces the strongest baseline numbers (Section 8).</li>
+</ul>
+<h3 id="32-benchmark-suite-m1m6">3.2 Benchmark suite <code>M1</code>–<code>M6</code></h3>
+<p><code>lstm_benchmark_models/architectures/m[1-6]_*.py</code> reproduces the five LSTM architectures above in a standardised shape, plus one novel graph variant:</p>
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Key addition over baseline</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>M1</td>
+<td>Baseline VanillaLSTM with <code>ChannelAttention(reduction=4)</code></td>
+</tr>
+<tr>
+<td>M2</td>
+<td>BiLSTM with combined channel + spatial attention</td>
+</tr>
+<tr>
+<td>M3</td>
+<td><code>CrissCrossBiLSTM</code> — attention applied horizontally (time) and vertically (channels) — cheaper than full 2D self-attention</td>
+</tr>
+<tr>
+<td>M4</td>
+<td>CNN-LSTM with SE blocks at each conv</td>
+</tr>
+<tr>
+<td>M5</td>
+<td>Feature-BiLSTM (226-feature input)</td>
+</tr>
+<tr>
+<td>M6</td>
+<td><strong>Graph BiLSTM</strong> — channels as graph nodes, GAT-style attention over channel connectivity</td>
+</tr>
+</tbody>
+</table>
+<p>M1–M6 share <code>_build_input_proj</code>, <code>_build_lstm</code>, and <code>_build_classifier</code> helpers so ablations can be run cleanly.</p>
+<h3 id="33-hierarchicallstm-improved_lstm_modelshierarchical_lstmpy60-136">3.3 HierarchicalLSTM (<code>improved_lstm_models/.../hierarchical_lstm.py:60-136</code>)</h3>
+<p>Two-level model operating on <strong>60-window (60-second) sequences</strong>:
+1. Window encoder (per-window CNN) squashes (16, 256) → 128.
+2. BiLSTM over the sequence of 60 128-dim window embeddings.
+3. Attention pooling over the 60 windows (learnable softmax weights) → classifier.</p>
+<p>Rationale: seizures have pre-ictal build-up that a 1-s window cannot capture. HierarchicalLSTM gives the model a minute of context while avoiding the O(T²) cost of self-attention over 15 360 raw samples.</p>
+<h3 id="34-m7-vq-transformer-ensemble_transformersm7_vq_transformerpy13-104">3.4 M7 VQ-Transformer (<code>ensemble_transformers/.../m7_vq_transformer.py:13-104</code>)</h3>
+<ul>
+<li>Patch embedding via <code>unfold(32)</code> → 8 patches × 512-dim → linear 512→128.</li>
+<li>Learned positional encoding (1, 9, 128) with CLS token.</li>
+<li>4-layer 4-head Transformer encoder (GELU, FFN 128→512→128).</li>
+<li><strong>Vector quantiser with 512 codes</strong> injects a discrete bottleneck, producing a VQ loss (commitment + codebook). This is the only model in the suite that learns a discrete "EEG vocabulary", giving a handle on interpretability (each patch is mapped to a code index).</li>
+</ul>
+<h3 id="35-eegmamba-eegmambamoe-hugging_face_mamba_moeeeg_mambapy21-80">3.5 EEGMamba &amp; EEGMambaMoE (<code>hugging_face_mamba_moe/.../eeg_mamba.py:21-80</code>)</h3>
+<p>Bidirectional Mamba blocks (forward + backward selective state-space) with <code>d_model = 128</code>, <code>d_conv = 4</code>, a <code>d_state = 16</code> SSM, and residual connections. Global mean pooling → LayerNorm → classifier. The MoE variant adds a router over expert FFNs.</p>
+<p>Engineering caveats (see §7.2 and §11): early versions suffered NaN losses due to (a) a <code>.expand()</code> in the SSM output that 256× amplified gradients (fixed in commit <code>9fbfe5f</code>), (b) an unstable log-space scan (replaced by a <code>torch.jit.script</code> compiled sequential scan in <code>7c60642</code>), and then (c) a 10–50× speed-up from a vectorised parallel scan in <code>94a5b2b</code>.</p>
+<h3 id="36-pretrained-foundation-models">3.6 Pretrained foundation models</h3>
+<ul>
+<li><strong>BENDR</strong> (<code>pretrained/bendr.py:11-60</code>) — Braindecode's <code>braindecode/braindecode-bendr</code> backbone consumed at 16 ch × 256 samples × 256 Hz. Per-channel z-score normalisation is <strong>mandatory at input</strong> (fix in commit <code>6516657</code>) or the pretrained distribution shift causes rapid divergence. <code>freeze_backbone=True</code> is supported for linear-probe evaluation.</li>
+<li><strong>EEGPT</strong> (<code>pretrained/eegpt.py:11-57</code>) — <code>braindecode/eegpt-pretrained</code> backbone. Pretrained on 64 channels; we override <code>chs_info=None</code> (same commit <code>6516657</code>) so the model does not enforce its 64-channel channel schema, allowing 16-channel fine-tuning.</li>
+<li><code>approach2/modules/pretrained_encoders.py</code> additionally exposes <strong>CBraMod (ICLR 2025)</strong>, <strong>BIOT</strong>, <strong>LaBraM (ICLR 2024)</strong> — wired as optional backbones for the M1–M7 variants in <code>approach2/architectures/</code>.</li>
+</ul>
+<h3 id="37-tinyseizurenet-approach3architecturestiny_seizure_netpy">3.7 TinySeizureNet (<code>approach3/architectures/tiny_seizure_net.py</code>)</h3>
+<p>Depthwise-separable 1-D CNN (<code>DepthwiseSeparableConv1d</code>) with &lt; 1 M parameters, trained via <code>MultiTeacherDistillation</code> from an ensemble of M1–M6 teachers. Intended for on-device deployment; a <code>QuantizedTinyNet</code> variant is provided for post-training quantisation.</p>
+<h3 id="38-loss-attention-utilities">3.8 Loss &amp; attention utilities</h3>
+<ul>
+<li><code>src/models/utils/losses.py</code>: <code>FocalLoss</code> (§5) — single source of truth after the Apr-14 consolidation.</li>
+<li><code>src/models/utils/metrics.py</code>: shared <code>compute_f1_score</code>, <code>compute_auc_roc</code>, <code>compute_sensitivity</code>, <code>compute_specificity</code>, plus the Youden-J threshold finder at lines 115–142.</li>
+<li>Attention modules: <code>ChannelAttention</code>, <code>ChannelAttentionWithContext</code>, <code>SpatialChannelAttention</code> (<code>lstm_benchmark_models/modules/channel_attention.py</code>), <code>CrissCrossAttention</code> (<code>.../criss_cross_attention.py</code>), <code>GraphAttention</code> (<code>.../graph_attention.py</code>).</li>
+</ul>
+<hr>
+<h2 id="4-why-lstm-design-rationale-alternatives">4. Why LSTM? Design Rationale &amp; Alternatives</h2>
+<p><strong>LSTM as default inductive bias.</strong> EEG is an ordered, locally-stationary time series sampled at 256 Hz. For a 1-second window (256 timesteps) a 2-layer LSTM has an effective receptive field well beyond the window length and is cheap enough to run on commodity GPUs. Recurrence is a strong inductive bias for signals whose instantaneous meaning depends on short-term history — precisely the case for ictal rhythm onset.</p>
+<p><strong>Why bidirectional.</strong> Offline seizure detection lets us look at the full window before deciding; a BiLSTM therefore sees both onset and offset of a transient spike-wave complex. The per-timestep embeddings are concatenated (256-dim), doubling classifier capacity without doubling recurrence length.</p>
+<p><strong>Why dual (mean + max) pooling.</strong> Seizures often manifest as localized bursts in time. Mean pooling alone smooths these away; max pooling alone is noise-sensitive. The concatenation is a cheap hedge.</p>
+<p><strong>Why add a CNN frontend (CNN-LSTM).</strong> Multi-scale kernels (3 / 15 / 31 samples ≈ 12 / 59 / 121 ms at 256 Hz) directly correspond to clinical EEG band interpretation (high-frequency spikes, spike-wave complexes, slow rhythms). CNN-LSTM is the baseline's top performer (Section 8), validating that temporal inductive bias + local translation invariance complement each other.</p>
+<p><strong>Why also try Transformers.</strong> Pure self-attention is permutation-invariant and data-hungry, but once we have the VQ bottleneck (M7) it doubles as an interpretable representation learner. The VQ codebook gives each 32-sample patch a discrete identity, which is useful for downstream retrieval / anomaly flagging.</p>
+<p><strong>Why also try Mamba / SSM.</strong> Mamba scales linearly in sequence length, which matters for the hierarchical 60-s context setting (3840 1-s window embeddings or 15 360 raw samples). The selective state-space mechanism is well-suited to signals with long quiet stretches punctuated by bursts.</p>
+<p><strong>Why pretrained (BENDR / EEGPT / CBraMod / LaBraM).</strong> CHB-MIT is small (23 subjects). Pretrained foundation models bring self-supervised priors learned from orders of magnitude more EEG, providing a strong feature extractor with only a linear probe fine-tuned. This is the standard "few-shot medical ML" recipe.</p>
+<p><strong>Compared to classical ML (SVM / RF on spectral features).</strong> FeatureBiLSTM is our nod to this family: it accepts 226 engineered features per window. We do not train a separate SVM/RF; the feature-based BiLSTM provides an implicit upper bound on what a classical pipeline could reach because it has access to the same features plus a temporal model on top.</p>
+<hr>
+<h2 id="5-loss-function-class-imbalance">5. Loss Function &amp; Class Imbalance</h2>
+<p>The training loss is a numerically-stable Focal Loss with post-hoc <code>pos_weight</code>:</p>
+<p>$$
+\mathcal{L}<em _text_pos="\text{pos">{\text{focal}}(p,y) \;=\; -\,\alpha_t\,(1 - p_t)^{\gamma}\,\log p_t \;\cdot\; w</em>}^{\,y}
+$$</p>
+<p>with $p_t = p$ if $y = 1$ else $1 - p$, $\alpha_t = \alpha$ if $y = 1$ else $1-\alpha$, $w_{\text{pos}} = n_-/\max(n_+,1)$, and $y$ smoothed by $\epsilon \in [0.02, 0.1]$ before passing to the loss.</p>
+<p>Defaults: $\alpha = 0.25$, $\gamma \in {1.0, 2.0}$, <code>pos_weight</code> computed from the training window index at training start.</p>
+<p><strong>Critical implementation fixes (visible in git history):</strong></p>
+<table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>f6460ac</code></td>
+<td>Inverted <code>pos_weight</code> (was <code>n_+ / n_-</code>, should be <code>n_- / n_+</code>) corrected; legacy results pre-dating this should be regarded with caution.</td>
+</tr>
+<tr>
+<td><code>0026241</code></td>
+<td><code>pos_weight</code> must be applied as a flat multiplier <strong>after</strong> focal modulation, not inside the BCE call. Inside-BCE semantics combine with the focal factor in a way that double-weights hard positives.</td>
+</tr>
+<tr>
+<td><code>66d6624</code></td>
+<td>Cast <code>FocalLoss</code> inputs to <code>float32</code> to prevent FP16 underflow under <code>torch.amp</code> autocast. Without this, <code>(1-p_t)^\gamma</code> flushes to zero when <code>p_t \to 1</code>, yielding zero gradient on the hard negatives the loss is meant to emphasise.</td>
+</tr>
+<tr>
+<td><code>d9bedbc</code></td>
+<td>Target threshold check <code>targets &gt; 0.5</code> rather than <code>targets == 1</code> — needed once label smoothing was added.</td>
+</tr>
+</tbody>
+</table>
+<p>Ref: <code>src/models/utils/losses.py</code> (consolidated FocalLoss). <code>approach2/train.py:489</code> uses $\gamma = 1.0$, $\epsilon = 0.02$; <code>train_hf.py:39-67</code> uses $\gamma = 2.0$, $\alpha = 0.25$ as CLI defaults.</p>
+<hr>
+<h2 id="6-hyperparameters-optimisation">6. Hyperparameters &amp; Optimisation</h2>
+<h3 id="61-training-script-inventory">6.1 Training-script inventory</h3>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>Models</th>
+<th>Epochs</th>
+<th>Batch</th>
+<th>LR</th>
+<th>WD</th>
+<th>Patience</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lstm_benchmark_models/train_baseline.py</code></td>
+<td>M1–M6</td>
+<td>30</td>
+<td>64</td>
+<td>1e-3</td>
+<td>1e-4</td>
+<td>7</td>
+<td>Focal γ = 2</td>
+</tr>
+<tr>
+<td><code>improved_lstm_models/train.py</code></td>
+<td>HierarchicalLSTM</td>
+<td>100</td>
+<td>32</td>
+<td>5e-5</td>
+<td>1e-4</td>
+<td>20</td>
+<td>After bbe24e0 / 9c8b7c7</td>
+</tr>
+<tr>
+<td><code>ensemble_transformers/train_ensemble.py</code></td>
+<td>M1–M7 ensemble</td>
+<td>50</td>
+<td>64</td>
+<td>5e-4</td>
+<td>1e-4</td>
+<td>15</td>
+<td>Then ensemble voting</td>
+</tr>
+<tr>
+<td><code>hugging_face_mamba_moe/train_hf.py</code></td>
+<td>Mamba / MoE / BENDR / EEGPT / etc. (12 models)</td>
+<td>20</td>
+<td>32</td>
+<td>1e-3</td>
+<td>1e-4</td>
+<td>7</td>
+<td><code>--model all</code>, <code>--grad_clip_norm 1.0</code>, <code>--decision_threshold 0.35</code></td>
+</tr>
+<tr>
+<td><code>approach2/train.py</code></td>
+<td>M1–M7 + pretrained backbones</td>
+<td>50</td>
+<td>64</td>
+<td>5e-4</td>
+<td>1e-4</td>
+<td>15</td>
+<td>WarmupCosineScheduler</td>
+</tr>
+<tr>
+<td><code>approach3/train_mamba.py</code></td>
+<td>EEGMamba + MoE</td>
+<td>20</td>
+<td>32</td>
+<td>1e-3</td>
+<td>1e-4</td>
+<td>7</td>
+<td>—</td>
+</tr>
+</tbody>
+</table>
+<p>All scripts share the same YAML master config at <code>src/models/config.yaml</code> (augmentation probabilities, window sec, stride sec, seizure ratio, etc.).</p>
+<h3 id="62-optimiser-and-schedule">6.2 Optimiser and schedule</h3>
+<p>Every script uses <strong>AdamW</strong> (<code>torch.optim.AdamW</code>) with weight decay <code>1e-4</code>. E.g. <code>approach2/train.py:377</code>, <code>train_hf.py:79</code>.</p>
+<p>The default schedule is <code>WarmupCosineScheduler</code> (custom, <code>approach2/train.py:90-110</code> and <code>improved_lstm_models/train.py:34-75</code>):</p>
+<p>$$
+\eta_t \;=\;
+\begin{cases}
+\eta_{\max}\cdot \dfrac{t+1}{T_{\text{warm}}}, &amp; t &lt; T_{\text{warm}} \[1ex]
+\eta_{\min} + \tfrac{1}{2}(\eta_{\max}-\eta_{\min})\Bigl(1 + \cos\bigl(\pi\cdot \tfrac{t - T_{\text{warm}}}{T - T_{\text{warm}}}\bigr)\Bigr), &amp; t \ge T_{\text{warm}}
+\end{cases}
+$$</p>
+<p>with $T_{\text{warm}} \in {5,10}$, $\eta_{\min} = 10^{-6}$. An alternate scheduler appears in <code>compare.py:165</code> (<code>CosineAnnealingWarmRestarts</code>, $T_0 = T - T_{\text{warm}}$) and in the legacy <code>improved/train_regularized.py:69</code> (<code>ReduceLROnPlateau</code>, factor 0.5, patience 3).</p>
+<h3 id="63-regularisation-and-stability">6.3 Regularisation and stability</h3>
+<ul>
+<li><strong>Dropout</strong> 0.3 (LSTM / BiLSTM); 0.1 (Transformer encoder).</li>
+<li><strong>Label smoothing</strong> $\epsilon \in {0.02, 0.1}$ — applied before the loss.</li>
+<li><strong>Gradient clipping</strong> by L2 norm = 1.0 (<code>train_hf.py:182</code>).</li>
+<li><strong>Mixed precision</strong> via <code>torch.amp.autocast</code> with float32 loss casts (see fix <code>66d6624</code>).</li>
+</ul>
+<h3 id="64-tuning-strategy">6.4 Tuning strategy</h3>
+<p>Tuning in this codebase is <strong>manual + iterative</strong>, not grid/random search. Each significant hyperparameter change is traceable to a commit message identifying the failure mode it addresses (e.g., <code>9c8b7c7 – lower improved_lstm lr to 0.0001 + more warmup/patience to fix unstable val loss</code>; <code>71277d3 – lower focal_gamma=1.0, higher lr=3e-3 to prevent loss collapse</code>). The git log therefore <em>is</em> the tuning log. Section 11 condenses it.</p>
+<h3 id="65-early-stopping-and-threshold-tuning">6.5 Early stopping and threshold tuning</h3>
+<ul>
+<li><strong>Early stop on val F1</strong> (not val loss) — switched in commits <code>bd32418</code> / <code>bbe24e0</code>. Compare uses <code>val_f1 &gt; best + 1e-4</code>; patience 7 (HF), 15 (ensemble), 20 (improved LSTM). <code>improved_lstm_models/train.py:116-139</code>.</li>
+<li><strong>Threshold tuning</strong></li>
+<li>Youden's J: <code>src/models/utils/metrics.py:115-142</code>, scan [0.01, 0.99] step 0.01, maximise $J = \text{sens} + \text{spec} - 1$.</li>
+<li>F1-max: <code>train_hf.py:199-216</code> and <code>ensemble_hf.py</code>, scan [0.05, 0.95] step 0.05. Default decision threshold (pre-tuning) = 0.35 (<code>train_hf.py:60</code>).</li>
+</ul>
+<hr>
+<h2 id="7-training-strategy-iteration">7. Training Strategy &amp; Iteration</h2>
+<h3 id="71-cross-cutting-choices">7.1 Cross-cutting choices</h3>
+<ul>
+<li><strong>Subject-independent splits</strong> from <code>core/stratify.py</code> prevent the easiest kind of leakage. Data augmentation runs per-sample inside the dataset, so augmented copies of a subject cannot appear in both train and val.</li>
+<li><strong>Balanced training, unbalanced evaluation.</strong> Oversampling is enabled only on train (<code>labels.py:184-210</code>); val / test keep natural prevalence for realistic sensitivity/specificity numbers.</li>
+<li><strong>Mixed precision</strong> everywhere (AMP autocast). Loss is cast to float32 before the focal modulation (commit <code>66d6624</code>).</li>
+<li><strong>Gradient clipping</strong> norm = 1.0 as a blanket safeguard against exploding gradients in RNN / SSM blocks.</li>
+</ul>
+<h3 id="72-stability-engineering-ssm-mamba">7.2 Stability engineering (SSM / Mamba)</h3>
+<p>Two Mamba-specific fixes are worth surfacing because they are not obvious from the API:
+- Commit <code>9fbfe5f</code> removes a <code>.expand()</code> in the SSM output whose broadcast shape caused a 256× gradient amplification during back-prop, producing NaN losses within a handful of iterations.
+- Commit <code>7c60642</code> replaces a hand-written log-space parallel scan with a <code>torch.jit.script</code>-compiled sequential scan, which sacrifices some throughput for numerical stability. A follow-up, <code>94a5b2b</code>, re-introduces a vectorised parallel scan that is 10–50× faster than the scripted loop while preserving stability.</p>
+<h3 id="73-ensemble-evaluation">7.3 Ensemble evaluation</h3>
+<p><code>src/models/hugging_face_mamba_moe/ensemble_hf.py</code> (introduced in <code>bd32418</code>) aggregates probabilities from multiple trained HF models by <strong>mean voting</strong> or <strong>weighted voting</strong>, tunes the ensemble's operating threshold via the same F1-max routine, and computes confusion-matrix metrics. Temporal smoothing across adjacent windows (moving average or consecutive-run minimum) is supported.</p>
+<h3 id="74-distillation-approach-3">7.4 Distillation (Approach 3)</h3>
+<p><code>MultiTeacherDistillation</code> (<code>approach3/architectures/tiny_seizure_net.py</code>) trains <code>TinySeizureNet</code> against the soft outputs of M1–M6, combining a KL-divergence term on logits with a CE term on labels. This is the fastest path to a &lt; 1 M-parameter deployable model without sacrificing much sensitivity.</p>
+<hr>
+<h2 id="8-results-evaluation">8. Results &amp; Evaluation</h2>
+<h3 id="81-metric-set-from-srcmodelsutilsmetricspy">8.1 Metric set (from <code>src/models/utils/metrics.py</code>)</h3>
+<ul>
+<li>F1 (sklearn).</li>
+<li>AUROC (sklearn <code>roc_auc_score</code>).</li>
+<li>Sensitivity = TP / (TP + FN).</li>
+<li>Specificity = TN / (TN + FP).</li>
+<li>Precision (inline in train scripts).</li>
+<li>Confusion matrix (TP, TN, FP, FN) as absolute counts.</li>
+<li>Threshold value at which those metrics are reported (for reproducibility).</li>
+</ul>
+<h3 id="82-persisted-baseline-results">8.2 Persisted baseline results</h3>
+<p>File: <code>src/models/legacy_baseline/results/baseline_results.json</code> (verbatim, all numbers rounded to 4 dp):</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Accuracy</th>
+<th>Sensitivity</th>
+<th>Specificity</th>
+<th>F1</th>
+<th>AUC</th>
+<th>Train time (s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Vanilla LSTM</td>
+<td>0.6447</td>
+<td>0.3139</td>
+<td>0.7865</td>
+<td>0.3464</td>
+<td>0.5629</td>
+<td>3 401</td>
+</tr>
+<tr>
+<td>BiLSTM</td>
+<td>0.6825</td>
+<td>0.2598</td>
+<td>0.8637</td>
+<td>0.3293</td>
+<td>0.6114</td>
+<td>6 488</td>
+</tr>
+<tr>
+<td>Attention-BiLSTM</td>
+<td>0.6926</td>
+<td>0.2731</td>
+<td>0.8724</td>
+<td>0.3476</td>
+<td>0.6406</td>
+<td>7 501</td>
+</tr>
+<tr>
+<td><strong>CNN-LSTM</strong></td>
+<td><strong>0.6819</strong></td>
+<td><strong>0.5692</strong></td>
+<td><strong>0.7302</strong></td>
+<td><strong>0.5177</strong></td>
+<td><strong>0.7118</strong></td>
+<td><strong>2 143</strong></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Reading the table.</strong>
+- Pure LSTM / BiLSTM achieve higher <strong>specificity</strong> than CNN-LSTM but fail to catch most seizures — sensitivity is 0.26–0.31, which is clinically unacceptable.
+- CNN-LSTM roughly doubles sensitivity (0.57) while retaining 0.73 specificity. F1 jumps from ~0.34 to ~0.52 and AUC from ~0.56–0.64 to 0.71.
+- Training time for CNN-LSTM (2 143 s) is the <strong>fastest</strong> of the four — the convolutional downsampling (stride 2) shrinks the LSTM's input length by 2×, and the conv stack is GPU-efficient compared to pure recurrence.
+- This single comparison is the strongest narrative hook for the paper: <em>multi-scale temporal convolution is the single most valuable frontend for seizure detection in this regime</em>, and motivates the subsequent adoption of richer frontends (M4 SE-CNN, VQ-Transformer patch embed, pretrained encoders).</p>
+<h3 id="83-other-models-checkpoints-vs-persisted-metrics">8.3 Other models (checkpoints vs persisted metrics)</h3>
+<p>Current repository state: <code>outputs/models/*_best.pt</code> checkpoints are produced by every training script, and per-epoch history is logged to <code>logs/history.csv</code> and <code>logs/test_metrics.json</code> (<code>train_hf.py:141, 157</code>). However, the only numeric test-set results committed to disk are the four rows above. <strong>Results for M1–M7, HierarchicalLSTM, EEGMamba, BENDR, EEGPT, TinySeizureNet, and the ensembles are not persisted as JSON in this branch</strong> and need to be re-extracted from the checkpoints before inclusion in a camera-ready paper.</p>
+<p>Action for authors: run <code>train_hf.py --model all --data_path ... --resume</code> (to load best checkpoints) and collect the <code>test_metrics.json</code> per model into one table before submission.</p>
+<hr>
+<h2 id="9-eeg-classification-detection-context">9. EEG Classification &amp; Detection Context</h2>
+<ul>
+<li><strong>Temporal dependencies.</strong> Seizures evolve over milliseconds (spike, spike-wave) to seconds (ictal rhythm build-up). The 1-s window + 2-layer LSTM spans ~256 samples of context, enough to represent a full spike-wave complex (~1–3 Hz). HierarchicalLSTM lifts this to 60 s so the model can see pre-ictal precursors. Mamba's linear-time scaling makes longer windows tractable.</li>
+<li><strong>Channel semantics.</strong> Focal seizures involve a small subset of electrodes; generalised seizures involve all. ChannelAttention learns per-example channel gating, mirroring a clinician's habit of focusing on the leads where the signal is abnormal. Graph attention in M6 goes further: adjacent electrodes have correlated activity, and a learned graph can encode that.</li>
+<li><strong>Multi-scale kernels.</strong> The 3 / 15 / 31-sample kernels in CNN-LSTM correspond roughly to the γ / β / α–θ band range at 256 Hz — a standard band decomposition built into the inductive bias of the convolutions instead of a preprocessing FFT.</li>
+<li><strong>Subject independence.</strong> Stratified subject splits are the right protocol for clinical deployment: the model must generalise to unseen patients. Oversampling is kept to the train split so val/test specificity reflects real-world false-alarm behaviour.</li>
+<li><strong>Robustness.</strong> Augmentations (time warp, noise, magnitude scale, time shift) emulate the kinds of variation a real recording session introduces (electrode impedance drift, amplifier gain drift, sampling-clock jitter).</li>
+</ul>
+<hr>
+<h2 id="10-comparative-insights-future-work">10. Comparative Insights &amp; Future Work</h2>
+<p><strong>Empirical takeaways from the current repo state.</strong>
+1. Adding a multi-scale CNN frontend produces the single biggest measured quality jump.
+2. Pure self-attention (without VQ or pretraining) is not attempted at scale; the Transformer-flavoured experiments wear either a VQ bottleneck (M7) or a pretrained backbone (BENDR / EEGPT).
+3. State-space models (Mamba) required substantial numerical-stability work but are now trainable; their value proposition — long context with linear cost — is only realised by the hierarchical / 60-s paths.
+4. Loss-function semantics matter: the sequence <code>f6460ac → 0026241 → 66d6624 → d9bedbc</code> systematically corrected Focal Loss to behave as intended.</p>
+<p><strong>Future directions.</strong>
+- <strong>Longer windows</strong>: scale the hierarchical path from 60 s to 5 min; compare against a plain Mamba over raw 15 000-sample sequences.
+- <strong>Seizure-type multi-class</strong>: the label machinery (<code>core/labels.py</code>) already supports keyword-based multi-class tagging (focal, generalised, absence). Enabling this is a one-line config change plus a modified classifier head.
+- <strong>Patient-specific fine-tuning</strong>: train a generic model on 20 patients, fine-tune the last layer on the first 30 minutes of the held-out patient; compare to fully subject-independent evaluation.
+- <strong>Online / streaming deployment</strong>: <code>TinySeizureNet</code> + <code>QuantizedTinyNet</code> gives a &lt; 1 MB model; pair with a causal inference loop and a moving-average smoother for false-alarm control.
+- <strong>Calibration</strong>: all current models are evaluated at a tuned operating threshold. Adding temperature scaling and Brier-score reporting would make the probability outputs clinically trustworthy.
+- <strong>Unified results harness</strong>: persist a <code>results/{model_name}.json</code> for every model so the next version of this document can replace §8.3 with a full comparison table.</p>
+<hr>
+<h2 id="11-timeline-of-modeling-code-evolution">11. Timeline of Modeling Code Evolution</h2>
+<p>Reconstructed from <code>git log --oneline</code>. Oldest work is at the bottom; most recent at the top. We group into four phases.</p>
+<h3 id="phase-4-ensembling-stability-polish-pretrained-fixes-current-mid-april-2026">Phase 4 — Ensembling, stability polish, pretrained fixes (current, mid-April 2026)</h3>
+<table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>6516657</code></td>
+<td><strong>HF train</strong>: robust best-F1 tracking with NaN guard; <strong>BENDR</strong> z-score normalise at input; <strong>EEGPT</strong> <code>chs_info=None</code> to unlock 16-channel fine-tuning.</td>
+</tr>
+<tr>
+<td><code>bbe24e0</code></td>
+<td><strong>Improved-LSTM</strong>: early stop on val F1 (not loss); reduce model size; lower LR to 5e-5.</td>
+</tr>
+<tr>
+<td><code>bd32418</code></td>
+<td>Introduce <code>ensemble_hf.py</code>: mean / weighted voting + threshold tuning.</td>
+</tr>
+<tr>
+<td><code>7c60642</code></td>
+<td>Replace unstable log-space scan with <code>torch.jit.script</code>-compiled sequential scan in Mamba (removes NaN).</td>
+</tr>
+<tr>
+<td><code>9fbfe5f</code></td>
+<td>Remove <code>.expand()</code> in SSM output — eliminates 256× gradient amplification → removes NaN loss.</td>
+</tr>
+<tr>
+<td><code>9c8b7c7</code></td>
+<td>Lower <code>improved_lstm</code> LR to 1e-4, more warmup/patience.</td>
+</tr>
+<tr>
+<td><code>94a5b2b</code></td>
+<td>Replace sequential Python SSM loop with vectorised parallel scan (10–50× speed-up).</td>
+</tr>
+<tr>
+<td><code>3d5a27d</code></td>
+<td><code>train_hf</code> default tuning (focal loss, threshold tuning, grad-clip); add <code>--model all</code>.</td>
+</tr>
+<tr>
+<td><code>21de52a</code></td>
+<td><code>--data_path</code> flag on <code>train_hf.py</code> to load <code>.pt</code> tensors directly.</td>
+</tr>
+<tr>
+<td><code>a33506e</code></td>
+<td>Project-root-relative paths in <code>data_loader</code> config.</td>
+</tr>
+<tr>
+<td><code>30055d1</code></td>
+<td>Drop unsupported <code>config_path</code> kwarg from <code>get_dataloaders()</code>.</td>
+</tr>
+<tr>
+<td><code>fd2ca90</code></td>
+<td><code>run_all_models.py</code> — one-command training across all dirs.</td>
+</tr>
+<tr>
+<td><code>ad7183a</code></td>
+<td>Filter kwargs per model to avoid unexpected-keyword errors.</td>
+</tr>
+<tr>
+<td><code>b13c5dd</code></td>
+<td><code>--model all</code> across benchmark.</td>
+</tr>
+<tr>
+<td><code>8342be0</code></td>
+<td>Cross-cutting bugfix / perf / robustness sweep over all 4 model dirs.</td>
+</tr>
+<tr>
+<td><code>d761539</code></td>
+<td>Split hygiene: val/ for early stopping, test/ for final eval.</td>
+</tr>
+<tr>
+<td><code>db3a9bc</code></td>
+<td>Fix ensemble-weights device mismatch; <code>approach2</code> warmup scheduler.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-3-architectural-diversification-approach-2-approach-3-early-april-2026">Phase 3 — Architectural diversification (Approach 2 / Approach 3, early April 2026)</h3>
+<table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>605ac69</code></td>
+<td><strong>Fix approach2 training collapse</strong> (4 bugs).</td>
+</tr>
+<tr>
+<td><code>d9bedbc</code></td>
+<td>FocalLoss targets &gt; 0.5 check; graph-attention reshape.</td>
+</tr>
+<tr>
+<td><code>0026241</code></td>
+<td>Apply <code>pos_weight</code> as flat multiplier after focal modulation (not inside BCE).</td>
+</tr>
+<tr>
+<td><code>66d6624</code></td>
+<td>Cast FocalLoss inputs to float32 to prevent FP16 underflow in AMP.</td>
+</tr>
+<tr>
+<td><code>fa1961e</code></td>
+<td>Plan doc: approach2 training-collapse fix plan.</td>
+</tr>
+<tr>
+<td><code>efe1d9f</code></td>
+<td>Fix 10 bugs in <code>improved_lstm</code>: crashes, logic errors, dead code.</td>
+</tr>
+<tr>
+<td><code>844dbfc</code></td>
+<td>Fix relative imports in <code>improved_lstm/train.py</code>.</td>
+</tr>
+<tr>
+<td><code>44c4903</code></td>
+<td><strong>Add <code>improved_lstm</code></strong> with augmentation, ensemble, enhanced training.</td>
+</tr>
+<tr>
+<td><code>de26605</code></td>
+<td>Fix <code>attention_bilstm</code> (remove downsampling); <code>feature_bilstm</code> (3D shape extraction).</td>
+</tr>
+<tr>
+<td><code>f6460ac</code></td>
+<td>Fix inverted <code>pos_weight</code>; add tensors format support; deprecated <code>torch.amp</code> API.</td>
+</tr>
+<tr>
+<td><code>71277d3</code></td>
+<td>Lower focal_gamma to 1.0, raise LR to 3e-3 to prevent loss collapse.</td>
+</tr>
+<tr>
+<td><code>183ddbb</code></td>
+<td>Fix UnboundLocalError: use <code>X_train/X_test</code> instead of <code>X_raw</code> for attention_bilstm.</td>
+</tr>
+<tr>
+<td><code>cb55216</code></td>
+<td>Fix Mamba block tensor shape: <code>torch.stack</code> vs <code>torch.cat</code>.</td>
+</tr>
+<tr>
+<td><code>093780a</code></td>
+<td>Support loading real EEG from tensors (<code>data.pt</code>, <code>labels.pt</code>).</td>
+</tr>
+<tr>
+<td><code>7870440</code></td>
+<td>Fix format-string TypeError on None values.</td>
+</tr>
+<tr>
+<td><code>4370e93</code></td>
+<td>Remove broken <code>fn_multiplier</code>; fix import paths in approach2/3.</td>
+</tr>
+<tr>
+<td><code>785a2e5</code></td>
+<td>Fix <code>run_benchmark.py</code> format bug; add training utils.</td>
+</tr>
+<tr>
+<td><code>13f0986</code></td>
+<td><strong>Merge</strong>: Add Approach 2 and Approach 3 models.</td>
+</tr>
+<tr>
+<td><code>f794e93</code></td>
+<td><strong>Add Approach 2</strong> (7 models + pretrained encoders) and <strong>Approach 3</strong> (Mamba, Diffusion, Pre-ictal).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-2-baseline-improvements-lstm-first-era">Phase 2 — Baseline improvements (LSTM-first era)</h3>
+<table>
+<thead>
+<tr>
+<th>Commit</th>
+<th>Change</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>d62d977</code></td>
+<td>Move old baseline scripts to <code>legacy_baseline/</code>.</td>
+</tr>
+<tr>
+<td><code>4ef865c</code></td>
+<td>Add comprehensive summary of LSTM improvements.</td>
+</tr>
+<tr>
+<td><code>ad959af</code></td>
+<td><strong>Complete LSTM improvements</strong>: parallel multi-scale CNN, temporal attention, ensemble inference, training optimisations.</td>
+</tr>
+<tr>
+<td><code>0c69cad</code></td>
+<td>Implement Focal Loss, FN weighting, label smoothing, LR warmup, ChannelAttention, positional encoding.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="phase-1-baseline-pre-mid-april">Phase 1 — Baseline (pre-mid-April)</h3>
+<p>Baseline M1–M6 LSTM benchmark suite, initial FocalLoss, legacy <code>dataloaders/</code>, and the <code>baseline_results.json</code> numbers reported in §8.2.</p>
+<hr>
+<h2 id="12-references-datasets">12. References &amp; Datasets</h2>
+<ul>
+<li><strong>CHB-MIT Scalp EEG Database</strong>, PhysioNet. (Shoeb &amp; Guttag.)</li>
+<li><strong>Focal Loss</strong>: Lin et al., <em>Focal Loss for Dense Object Detection</em>, ICCV 2017.</li>
+<li><strong>BENDR</strong>: Kostas et al., <em>BENDR: Using Transformers and a Contrastive Self-Supervised Learning Task to Learn from Massive Amounts of EEG Data</em>.</li>
+<li><strong>EEGPT</strong>: <em>EEGPT: Pretrained Transformer for Universal and Reliable Representation of EEG Signals</em>, NeurIPS 2024.</li>
+<li><strong>LaBraM</strong>: <em>Large Brain Model for Learning Generic Representations with Tremendous EEG Data in BCI</em>, ICLR 2024.</li>
+<li><strong>CBraMod</strong>: ICLR 2025.</li>
+<li><strong>BIOT</strong>: <em>BIOT: Cross-data Biosignal Learning in the Wild</em>.</li>
+<li><strong>Mamba</strong>: Gu &amp; Dao, <em>Mamba: Linear-Time Sequence Modeling with Selective State Spaces</em>, 2023.</li>
+</ul>
+<hr>
+<h2 id="appendix-a-file-level-citation-index">Appendix A — File-Level Citation Index</h2>
+<p>For any claim in this document, the cited file:line can be opened directly. Primary references:</p>
+<ul>
+<li>Data pipeline: <code>src/data_loader/core/{signal.py, channels.py, labels.py, stratify.py, augment.py, bids.py, io.py, download.py}</code>, <code>src/data_loader/dataset/{base.py, loaders.py, factory.py}</code>, <code>src/data_loader/config.yaml</code>.</li>
+<li>Architectures: <code>src/models/architectures/{vanilla_lstm.py, bilstm.py, attention_bilstm.py, feature_bilstm.py, cnn_lstm.py}</code>, <code>src/models/lstm_benchmark_models/architectures/m[1-6]_*.py</code>, <code>src/models/improved_lstm_models/architectures/hierarchical_lstm.py</code>, <code>src/models/ensemble_transformers/architectures/m7_vq_transformer.py</code>, <code>src/models/hugging_face_mamba_moe/architectures/eeg_mamba.py</code>, <code>src/models/hugging_face_mamba_moe/architectures/pretrained/{bendr.py, eegpt.py}</code>, <code>src/models/approach3/architectures/tiny_seizure_net.py</code>.</li>
+<li>Training / loss / metrics: <code>src/models/utils/{losses.py, metrics.py}</code>, <code>src/models/approach2/train.py</code>, <code>src/models/hugging_face_mamba_moe/{train_hf.py, ensemble_hf.py}</code>, <code>src/models/improved_lstm_models/train.py</code>, <code>src/models/lstm_benchmark_models/train_baseline.py</code>, <code>src/models/ensemble_transformers/train_ensemble.py</code>.</li>
+<li>Persisted results: <code>src/models/legacy_baseline/results/baseline_results.json</code>.</li>
+<li>Master config: <code>src/models/config.yaml</code>.</li>
+</ul>
+<hr>
+<p><em>End of draft. Next revision should populate §8.3 with per-model test metrics extracted from the <code>outputs/models/*_best.pt</code> checkpoints.</em></p>
+</body>
+</html>

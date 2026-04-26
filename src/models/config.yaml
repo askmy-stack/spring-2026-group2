@@ -1,0 +1,93 @@
+# src/models/config.yaml
+# Single source of truth for all model hyperparameters.
+# All training scripts load this via load_config(). No hardcoded values elsewhere.
+
+data:
+  # --data_path CLI arg is the source of truth for where tensors live;
+  # README defaults to src/data/processed/chbmit.
+  n_channels: 16
+  time_steps: 256
+  train_split: 0.70
+  val_split: 0.15
+  test_split: 0.15
+
+training:
+  # Global defaults; per-model blocks below override as needed.
+  learning_rate: 0.0003       # was 0.0005 — more stable across Mamba / HF / LSTM
+  batch_size: 32
+  num_epochs: 60              # was 100 — early-stop still kicks in; less compute
+  pos_weight: 3.0
+  early_stopping_patience: 15
+  gradient_clip: 1.0
+  warmup_epochs: 8            # was 5 — needed for Mamba-MoE stability
+  weight_decay: 0.01
+  label_smoothing: 0.1
+  aug_prob: 0.5
+
+focal_loss:
+  gamma: 2.0
+  reduction: "mean"
+
+models:
+  lstm_benchmark:
+    hidden_size: 192          # was 128 — wider model, same data size
+    num_layers: 2
+    num_heads: 4
+    dropout: 0.4              # was 0.3 — pair with wider hidden to avoid overfit
+
+  improved_lstm:
+    hidden_size: 128          # was 96 — restored; extra dropout keeps regularisation
+    num_layers: 2
+    n_windows: 1
+    dropout: 0.45             # was 0.5 — marginally less aggressive with new LR
+    learning_rate: 0.0001     # was 5e-5 — slightly higher to match lower patience
+    warmup_epochs: 10
+    early_stopping_patience: 10
+    weight_decay: 0.05
+
+  improved_benchmark:
+    common:
+      hidden_size: 192
+      num_heads: 8
+      dropout: 0.4
+      stochastic_depth: 0.1
+      weight_decay: 0.05
+      learning_rate: 3.0e-4
+      mixup_alpha: 0.3        # was 0.2 — stronger mixup fights window leakage
+      tta_shifts: [-5, 0, 5]
+      swa_start_frac: 0.75
+      k_folds: 5              # was 3 — more reliable CV estimate
+      seeds: [42, 43, 44, 45, 46]
+
+    im1_vanilla_lstm:   { hidden_size: 192, dropout: 0.4 }
+    im2_bilstm:         { hidden_size: 192, dropout: 0.4 }
+    im3_criss_cross:    { hidden_size: 160, dropout: 0.3, learning_rate: 1.0e-4, warmup_epochs: 10, stochastic_depth: 0.05 }
+    im4_cnn_lstm:       { hidden_size: 192, dropout: 0.4 }
+    im5_feature_bilstm: { hidden_size: 192, dropout: 0.4 }
+    im6_graph_bilstm:   { hidden_size: 160, dropout: 0.4 }
+    im7_attention_lstm: { hidden_size: 192, num_heads: 8, num_attn_blocks: 4, dropout: 0.4 }
+
+  ensemble_transformers:
+    patch_size: 32
+    hidden_size: 128
+    codebook_size: 512
+    num_layers: 4
+    num_heads: 4
+    dropout: 0.1
+    ensemble_strategy: "weighted"
+
+  hugging_face_mamba_moe:
+    d_model: 192              # was 128 — deeper state helps seizure context
+    d_state: 16
+    d_conv: 4
+    n_layers: 6               # was 4 — stack more SSM blocks
+    num_experts: 8
+    top_k: 2
+    dropout: 0.3              # was 0.1 — combat overfit (train/val gap was 240x)
+    bidirectional: true
+    moe_loss_weight: 0.001    # was 0.01 — fixes NaN divergence from epoch 11
+
+outputs:
+  checkpoint_dir: "outputs/models"
+  results_dir: "outputs/results"
+  log_dir: "outputs/logs"

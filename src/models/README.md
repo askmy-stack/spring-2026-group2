@@ -1,211 +1,328 @@
-# EEG Seizure Detection — Models
+# EEG Seizure Detection — Model Directory
 
-All models are run from the **project root** using `python -m src.models.*`.  
-Primary metric: **AUCPR** (Area Under Precision-Recall Curve) — correct for severe class imbalance (0.3% seizure rate).
+Canonical pipeline: **three training directories + one shared utilities package + one orchestrator**. Everything else has been deleted (root-level duplicates, superseded `improved/` and `architectures/` folders) or archived under `_experimental/` (research WIP that is not wired into the canonical pipeline).
 
----
-
-## Results Summary
-
-| Model | Test AUCPR | Test ROC-AUC | Test F1 |
-|-------|-----------|-------------|---------|
-| Random Forest (Optuna) | **0.357** | 0.882 | 0.152 |
-| XGBoost (Optuna) | 0.251 | 0.927 | 0.192 |
-| LightGBM (Optuna) | 0.230 | **0.933** | 0.195 |
-| TabNet | 0.309 | 0.856 | **0.220** |
-
----
-
-## Folder Structure
+## Directory Layout
 
 ```
 src/models/
-├── baseline/
-│   ├── train_model.py          # LightGBM / XGBoost / RF — single training run
-│   └── train_tabnet.py         # TabNet baseline training
-├── improved/
-│   ├── optuna_lightgbm.py      # LightGBM with Optuna Bayesian tuning
-│   ├── optuna_xgboost.py       # XGBoost with Optuna Bayesian tuning
-│   └── optuna_random_forest.py # Random Forest with Optuna Bayesian tuning
-└── utils/
-    ├── config_utils.py         # YAML loader with portable path resolution
-    ├── data_utils.py           # load_split, validate_feature_columns
-    ├── metric_utils.py         # AUCPR, ROC-AUC, F1, threshold sweep
-    ├── io_utils.py             # ensure_dir, save_csv, save_json
-    ├── plot_utils.py           # PR curve, ROC curve, confusion matrix, feature importance
-    └── prepare_memmap.py       # Convert feature CSVs to memory-mapped arrays for TabNet
+├── config.yaml                   # Single source of truth for hyperparameters
+├── run_all_models.py             # Orchestrator: runs all three phases sequentially
+├── README.md                     # This file
+│
+├── utils/                        # Shared across every training/inference entry point
+│   ├── losses.py                 # FocalLoss (with pos_weight + label smoothing)
+│   ├── metrics.py                # F1 / AUROC / sens / spec / find_optimal_threshold
+│   ├── callbacks.py              # EarlyStopping, gradient clipping
+│   ├── config_validator.py       # Validates config.yaml shape
+│   ├── checkpoint.py             # UNIFIED .pt schema — save/load_checkpoint
+│   └── hf_publish.py             # publish to Hugging Face Hub; rehydrate_from_hub
+│
+├── lstm_benchmark_models/        # Phase 1: m1–m6 LSTM/CNN baselines
+│   ├── architectures/            #   m1 Vanilla, m2 BiLSTM, m3 CrissCross,
+│   │                             #   m4 CNN-LSTM, m5 FeatureBiLSTM, m6 GraphBiLSTM
+│   ├── modules/                  #   attention blocks, graph attention
+│   └── train_baseline.py         #   → writes unified-schema .pt
+│
+├── improved_lstm_models/         # Phase 2: HierarchicalLSTM + improved m1..m7 (im1..im7)
+│   ├── architectures/
+│   │   ├── hierarchical_lstm.py  #   two-level CNN + BiLSTM
+│   │   └── improved_benchmarks/  #   im1..im7 (subclass each m_i; wider defaults + DropPath)
+│   ├── modules/
+│   │   └── regularization.py     #   DropPath, SqueezeExcite1D, wrap_with_droppath
+│   ├── augmentation.py           #   time shift, noise, channel dropout, time mask
+│   ├── training/                 #   improved-benchmark training stack
+│   │   ├── mixup.py              #     MixUp + label-smoothed BCE
+│   │   ├── swa.py                #     Stochastic Weight Averaging hook
+│   │   ├── tta.py                #     Test-Time Augmentation (shift / flip)
+│   │   ├── kfold.py              #     subject-wise K-fold (stratified fallback)
+│   │   └── train_improved_benchmark.py   # im1..im7 driver (K-fold x seeds x SWA)
+│   ├── train.py                  #   HierarchicalLSTM trainer (val-F1 early stop)
+│   └── ensemble.py               #   EnsemblePredictor + shape-aware CLI (3-D / 4-D)
+│
+├── hugging_face_mamba_moe/       # Phase 3: Mamba SSM, MoE, HF CNNs, pretrained wrappers
+│   ├── architectures/            #   EEGMamba, EEGMambaMoE, 8 HF CNNs,
+│   │   └── pretrained/           #   4 HF-Hub wrappers (BENDR, BIOT, EEGPT, ST-EEGFormer)
+│   ├── modules/                  #   Mamba SSM blocks, MoE routing, CNN primitives
+│   ├── train_mamba.py            #   Mamba / MoE training (+ aux load-balance loss)
+│   ├── train_hf.py               #   Generic HF model trainer (unified-schema save)
+│   └── ensemble_hf.py            #   Ensemble over all trained HF checkpoints
+│
+├── tools/                        # Developer tools
+│   └── infer_edf.py              #   Smoke test: load .pt + run on a raw .edf file
+│
+├── legacy_baseline/              # Preserved only so baseline_results.json stays reproducible
+│
+└── _experimental/                # Archived research WIP — NOT on the canonical path
+    ├── approach2/                #   7-model stacking ensemble w/ BO meta-learner
+    ├── approach3/                #   Mamba distillation + diffusion pretraining
+    └── ensemble_transformers/    #   VQ-Transformer + 7-model ensemble
 ```
-
----
 
 ## Prerequisites
 
-Feature CSVs must exist before running any model:
-
-```
-results/features_raw/
-├── features_train.csv
-├── features_val.csv
-└── features_test.csv
+```bash
+pip install torch numpy scikit-learn pyyaml mne
+# For the HuggingFace pretrained wrappers (optional):
+pip install 'braindecode[hug]' huggingface_hub safetensors
 ```
 
-See `src/feature_engineering/README.md` for how to generate them.
+## End-to-End Workflow
 
----
+### 1. Prepare Data
 
-## Classical ML Models
-
-### Single training run (no Optuna)
+Convert raw CHB-MIT EDF files to tensor splits. Windows at 256 Hz into 1-sec
+windows (16 channels × 256 timesteps), applies z-score normalisation, and
+splits 70/15/15 by subject:
 
 ```bash
-# LightGBM
-python -m src.models.baseline.train_model \
-    --config src/config/baseline_lightgbm.yaml
-
-# XGBoost
-python -m src.models.baseline.train_model \
-    --config src/config/baseline_xgboost.yaml
-
-# Random Forest
-python -m src.models.baseline.train_model \
-    --config src/config/baseline_random_forest.yaml
+python src/prepare_tensors.py \
+    --raw_dir src/data/raw/chbmit \
+    --out_dir src/data/processed/chbmit
 ```
 
-### With Optuna hyperparameter tuning (recommended)
+> Note: `src/data_loader/precache.py` is a **different** tool — it builds the
+> on-disk pickle cache consumed by `CachedEEGLoader`. The canonical training
+> scripts here read the `data.pt` / `labels.pt` layout produced by
+> `prepare_tensors.py`, not the pickle cache.
+
+Output layout:
+
+```
+src/data/processed/chbmit/
+├── train/  data.pt  labels.pt
+├── val/    data.pt  labels.pt
+└── test/   data.pt  labels.pt
+```
+
+Tensors are `(N, 16, 256)` float32 at 256 Hz with 1-second windows; labels are `(N,)` long.
+
+### 2. Train Models
+
+All training scripts read `src/models/config.yaml` and write a **unified
+checkpoint** (see below) to `outputs/models/` by default.
 
 ```bash
-# LightGBM — 50 Optuna trials, maximizes val AUCPR
-python -m src.models.improved.optuna_lightgbm \
-    --config src/config/baseline_lightgbm.yaml
+# Phase 1 — benchmarks (m1–m6, or 'all')
+python -m src.models.lstm_benchmark_models.train_baseline \
+    --model m1_vanilla_lstm --data_path src/data/processed/chbmit
 
-# XGBoost
-python -m src.models.improved.optuna_xgboost \
-    --config src/config/baseline_xgboost.yaml
+# Phase 2 — improved LSTM (HierarchicalLSTM + augmentation)
+python -m src.models.improved_lstm_models.train \
+    --data_path src/data/processed/chbmit
 
-# Random Forest
-python -m src.models.improved.optuna_random_forest \
-    --config src/config/baseline_random_forest.yaml
+# Phase 3a — Mamba / Mamba-MoE
+python -m src.models.hugging_face_mamba_moe.train_mamba \
+    --model eeg_mamba --data_path src/data/processed/chbmit
+
+# Phase 3b — HuggingFace models (eegnet, deepconvnet, eegpt_pretrained, …)
+python -m src.models.hugging_face_mamba_moe.train_hf \
+    --model eegnet --data_path src/data/processed/chbmit
+
+# Or run every phase at once
+python -m src.models.run_all_models --data_path src/data/processed/chbmit
 ```
 
-**What Optuna tunes:**
+### 3. Ensemble
 
-| Model | Tuned Parameters |
-|-------|-----------------|
-| LightGBM | n_estimators, learning_rate, num_leaves, max_depth, min_child_samples, subsample, colsample_bytree, reg_alpha, reg_lambda |
-| XGBoost | n_estimators, learning_rate, max_depth, subsample, colsample_bytree, reg_alpha, reg_lambda, scale_pos_weight |
-| Random Forest | n_estimators, max_depth, min_samples_leaf, min_samples_split, max_features |
-
-**Outputs** (saved to `output_dir` from config):
-- `best_model.joblib` — trained model
-- `best_params.json` — winning hyperparameters
-- `metrics_val.json` / `metrics_test.json` — AUCPR, ROC-AUC, F1, precision, recall
-- `threshold_sweep.csv` — F1 at every threshold from 0.01 to 0.99
-- `pr_curve.png`, `roc_curve.png`, `confusion_matrix.png`, `feature_importance.png`
-
----
-
-## TabNet Models
-
-TabNet requires memory-mapped arrays instead of loading the full CSV into RAM.
-
-### Step 1 — Prepare memmap (run once per config)
+Once ≥ 2 checkpoints exist, ensemble them with the helper CLIs:
 
 ```bash
-python -m src.models.utils.prepare_memmap \
-    --config src/config/tabnet_baseline.yaml
+# Ensemble all improved-LSTM .pt files in a directory
+python -m src.models.improved_lstm_models.ensemble \
+    --data_path src/data/processed/chbmit \
+    --ckpt_dir src/models/improved_lstm_models/checkpoints
+
+# Ensemble all HF-model checkpoints
+python -m src.models.hugging_face_mamba_moe.ensemble_hf \
+    --data_path src/data/processed/chbmit --strategy weighted
 ```
 
-This creates:
-```
-results/modeling/tabnet/memmap/
-├── X_train.dat / y_train.dat / train_meta.json
-├── X_val.dat   / y_val.dat   / val_meta.json
-└── X_test.dat  / y_test.dat  / test_meta.json
-```
+Both auto-discover `.pt` files, rebuild models via `load_checkpoint`, run per-member
+inference, and report **mean** and **val-F1-weighted** ensemble metrics with the
+threshold tuned on validation data.
 
-Use `--force` to overwrite existing memmap files.
+### 4. Inference Smoke Test
 
-### Step 2 — Train TabNet
+Verify that a checkpoint is loadable and runnable end-to-end on a raw EDF:
 
 ```bash
-python -m src.models.baseline.train_tabnet \
-    --config src/config/tabnet_baseline.yaml
+python -m src.models.tools.infer_edf \
+    --edf src/data/raw/chbmit/chb01/chb01_01.edf \
+    --ckpt outputs/models/m1_vanilla_lstm_best.pt
 ```
 
----
+The tool reads the checkpoint's stored `input_spec` + `preprocess` + `optimal_threshold`,
+so no external configuration is needed.
 
-## Utils
+## Unified Checkpoint Schema
 
-### config_utils.py
-Loads YAML configs and resolves all relative paths from the config file's own directory — no hardcoded paths anywhere.
+Every canonical training script writes `.pt` files via
+`src.models.utils.checkpoint.save_checkpoint`. The on-disk payload is:
+
+| Key                     | Type        | Purpose                                                       |
+|-------------------------|-------------|---------------------------------------------------------------|
+| `schema_version`        | int         | Currently `1`; bump on breaking changes.                      |
+| `model_class`           | str         | `"pkg.module.ClassName"` — used to auto-rebuild the module.   |
+| `model_config`          | dict        | Constructor kwargs for `_try_build_model`.                    |
+| `model_state_dict`      | dict        | Tensor weights.                                               |
+| `optimizer_state_dict`  | dict / None | For training resume.                                          |
+| `epoch`                 | int         | Last epoch at save time.                                      |
+| `val_metrics`           | dict        | `{"f1", "auroc", "sens", "spec"}` at save time.               |
+| `optimal_threshold`     | float       | Decision threshold tuned on validation data.                  |
+| `input_spec`            | dict        | `{"channels": 16, "sfreq": 256, "window_sec": 1.0}`.          |
+| `preprocess`            | dict        | Params needed to reproduce preprocessing at inference time.   |
+| `git_commit`            | str / None  | Short SHA for provenance.                                     |
+
+Load any checkpoint uniformly:
 
 ```python
-from src.models.utils.config_utils import load_config
-cfg = load_config("src/config/baseline_lightgbm.yaml")
+from src.models.utils.checkpoint import load_checkpoint
+model, payload = load_checkpoint("outputs/models/m1_vanilla_lstm_best.pt")
+threshold = payload["optimal_threshold"]
 ```
 
-### data_utils.py
-```python
-from src.models.utils.data_utils import load_split, validate_feature_columns
+If auto-rebuild fails (e.g., HF pretrained wrappers that require a factory), the
+caller can still access the raw `payload["model_state_dict"]` and build the
+model manually.
 
-X_train, y_train, train_cols, meta = load_split(
-    csv_path, target_col="label", meta_cols=["path","start_sec","end_sec"]
+## Improved Benchmarks (im1..im7) — Full Upgrade Stack
+
+Each `im_i` subclasses its `m_i` counterpart with wider defaults (`hidden_size 192`, `num_heads 8`) and a new `stochastic_depth` kwarg wired through DropPath. The trainer in `improved_lstm_models/training/train_improved_benchmark.py` runs **3 seeds × 3 subject-wise folds = 9 sub-runs per model**, applies EEG augmentation + MixUp + focal/label-smoothed BCE + AMP + warmup-cosine LR + SWA over the last 25 % of epochs + F1-based early stopping, and finalises with TTA at eval. Sub-runs land under `checkpoints/sub_runs/`; one aggregated unified-schema `.pt` per model lands at the top of `checkpoints/`.
+
+```bash
+# Train every improved benchmark
+python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+    --model all --data_path $DATA
+
+# Fast smoke run (1 seed × 2 folds × 3 epochs)
+python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+    --model im7_attention_lstm --data_path $DATA --dry_run
+```
+
+## Publishing to the Hugging Face Hub
+
+All unified-schema checkpoints (originals, improved, or the ensemble meta) can be published as a single public monorepo:
+
+```bash
+pip install 'huggingface_hub[cli]' safetensors
+huggingface-cli login           # or export HF_TOKEN=hf_...
+
+python -m src.models.utils.hf_publish \
+    --repo-id <your-user>/chbmit-seizure-models \
+    --ckpt-dirs src/models/improved_lstm_models/checkpoints \
+    --include 'im*_best.pt' 'improved_lstm_best.pt' \
+    --visibility public
+```
+
+Each model gets its own subfolder on the Hub containing `model.safetensors`, `config.json`, `metrics.json`, and an auto-generated `README.md` model card. To round-trip load any published model back into the project:
+
+```python
+from src.models.utils.hf_publish import rehydrate_from_hub
+model, payload = rehydrate_from_hub(
+    "<your-user>/chbmit-seizure-models",
+    subfolder="im7_attention_lstm",
 )
-validate_feature_columns(train_cols, val_cols, test_cols)
 ```
 
-### metric_utils.py
-```python
-from src.models.utils.metric_utils import compute_binary_metrics, sweep_thresholds_for_f1
+## Two-Tier Meta Ensemble
 
-metrics = compute_binary_metrics(y_true, y_prob, threshold=0.5)
-# Returns: aucpr, roc_auc, f1, precision, recall, confusion_matrix
+Per-family ensembles each dump `val_probs.npy` / `test_probs.npy` (plus labels)
+next to their `ensemble_metrics.json`. A thin top-level meta-ensemble combines
+those arrays — no model reload, no GPU required.
 
-best_threshold, rows = sweep_thresholds_for_f1(y_true, y_prob)
+```text
+┌──────────────────── meta_ensemble.py ────────────────────┐
+│   mean / weighted / rank_average / logistic_stacking     │
+└──────────────────────────────────────────────────────────┘
+        │                    │                    │
+  LSTM family           Mamba family          HF family
+  ensemble.py           ensemble_mamba.py     ensemble_hf.py
+  (m1–m7, im1–im7,      (eeg_mamba,           (baseline_cnn_1d,
+   HierarchicalLSTM)     eeg_mamba_moe)        enhanced_cnn_1d, …)
 ```
-
-### prepare_memmap.py
-```bash
-python -m src.models.utils.prepare_memmap \
-    --config src/config/tabnet_baseline.yaml \
-    --chunksize 50000   # rows per chunk (default: 50000)
-    --force             # overwrite existing files
-```
-
----
-
-## Config Files
-
-All configs live in `src/config/`. Key sections:
-
-```yaml
-model_type: lightgbm          # lightgbm | xgboost | random_forest | tabnet
-
-paths:
-  train_csv:  ../../results/features_raw/features_train.csv
-  val_csv:    ../../results/features_raw/features_val.csv
-  test_csv:   ../../results/features_raw/features_test.csv
-  output_dir: ../../results/modeling/lightgbm/optuna
-
-data:
-  meta_cols: [path, start_sec, end_sec]
-  dtype: float32
-
-target_col: label
-
-optuna:
-  n_trials: 50
-  direction: maximize       # maximize val AUCPR
-```
-
----
-
-## Running in Background (HPC / AWS)
 
 ```bash
-nohup python -m src.models.improved.optuna_lightgbm \
-    --config src/config/baseline_lightgbm.yaml \
-    > results/logs/lgbm.log 2>&1 &
+# 1. Build each family's ensemble (writes val/test probs.npy next to metrics)
+python -m src.models.improved_lstm_models.ensemble \
+    --data_path $DATA \
+    --out_dir outputs/ensemble/lstm
 
-tail -f results/logs/lgbm.log
+python -m src.models.hugging_face_mamba_moe.ensemble_mamba \
+    --data_path $DATA \
+    --out_dir outputs/ensemble/mamba
+
+python -m src.models.hugging_face_mamba_moe.ensemble_hf \
+    --data_path $DATA
+
+# 2. Combine families
+python -m src.models.meta_ensemble \
+    --family_dir outputs/ensemble/lstm \
+    --family_dir outputs/ensemble/mamba \
+    --family_dir src/results/model/ensemble \
+    --strategy weighted \
+    --out_dir outputs/ensemble/meta
 ```
+
+Why two tiers? Each family has its own I/O contract (sigmoid vs softmax, 3-D
+vs 4-D input, distinct threshold calibration). Calibrating each family first
+and then combining probabilities dodges those mismatches and keeps per-family
+bugs from silently corrupting the top-level ensemble.
+
+## Retraining
+
+Two passes are supported: a short one that only touches the broken/weak
+models, and a full retrain once the new `config.yaml` bumps are in effect.
+
+```bash
+# --- Pass 1: fix + retune (~3–4 h on one A100) ----------------------------
+# Mamba: threshold tuning on val + NaN guard + LR warmup.
+python -m src.models.hugging_face_mamba_moe.train_mamba \
+    --model eeg_mamba     --data_path $DATA
+python -m src.models.hugging_face_mamba_moe.train_mamba \
+    --model eeg_mamba_moe --data_path $DATA
+
+# Previously-skipped HF models (biot 200 Hz / st_eegformer 128 Hz / bendr 20 ch
+# are now handled via runtime resample or zero-pad in train_hf._load_data):
+for m in biot_pretrained st_eegformer hf_st_eegformer bendr_pretrained \
+         multiscale_attention_cnn ; do
+  python -m src.models.hugging_face_mamba_moe.train_hf \
+      --model "$m" --data_path $DATA --train_augment
+done
+
+# --- Pass 2: full retrain (~12–16 h overnight) ----------------------------
+python -m src.models.lstm_benchmark_models.train_baseline --model all --data_path $DATA
+python -m src.models.improved_lstm_models.train --data_path $DATA
+python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+    --model all --data_path $DATA
+python -m src.models.hugging_face_mamba_moe.train_hf \
+    --model all --data_path $DATA --train_augment
+```
+
+After each pass, rebuild the family ensembles and rerun the meta ensemble.
+
+## Configuration
+
+All hyperparameters live in `src/models/config.yaml`:
+
+| Section         | Controls                                                                |
+|-----------------|-------------------------------------------------------------------------|
+| `data`          | `n_channels`, `time_steps`, split layout                                |
+| `training`      | `learning_rate`, `batch_size`, `num_epochs`, `pos_weight`, grad clip    |
+| `focal_loss`    | `gamma`, `reduction`                                                    |
+| `models.*`      | Per-phase model hyperparameters; may override `training` keys           |
+| `outputs`       | `checkpoint_dir`, `results_dir`                                         |
+
+`src/data_loader/config.yaml` is intentionally separate (controls preprocessing
+and caching — not the model pipeline). The two are kept decoupled on purpose.
+
+## What Was Deleted / Archived
+
+- **Deleted** (superseded by canonical dirs): root-level `attention_bilstm.py`,
+  `bilstm.py`, `cnn_lstm.py`, `feature_bilstm.py`, `vanilla_lstm.py`,
+  `compare.py`, `train.py`, `ensemble.py`, `run_benchmark.py`, and the
+  `improved/`, `improved_lstm/`, `architectures/` directories.
+- **Archived** to `_experimental/` (non-canonical but non-trivial IP):
+  `approach2/`, `approach3/`, `ensemble_transformers/`.
+- **Kept** at top level for reproducibility of the research paper draft:
+  `legacy_baseline/`.
