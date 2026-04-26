@@ -52,3 +52,17 @@ CHECKPOINT_VALIDATION_REPORT.md
 MODEL_STATUS_REPORT_APR23_2026.pdf
 
 
+
+# OS / IDE junk
+.DS_Store
+Capstone/.obsidian/
+docs/superpowers/
+
+# Model checkpoints (use DVC or cloud storage instead)
+src/models/legacy_baseline/results/checkpoints/*.pt
+
+# Debug artifacts
+src/debug_session_log.txt
+
+# Wiki (managed separately)
+wiki/
