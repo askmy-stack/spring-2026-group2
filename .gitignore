@@ -37,3 +37,18 @@ logs/
 *.npz
 *.npy
 .cache/
+
+# IDE / local tooling
+.idea/
+.serena/
+
+# Local report generation scripts
+generate_changes_pdf.py
+generate_final_report.py
+generate_model_status_report.py
+
+# Local report artifacts
+CHECKPOINT_VALIDATION_REPORT.md
+MODEL_STATUS_REPORT_APR23_2026.pdf
+
+
