@@ -1,0 +1,50 @@
+experiment_name: tuned_xgboost_optuna
+model_type: xgboost
+target_col: label
+
+paths:
+  train_csv: ../../results/features_raw/features_train.csv
+  val_csv: ../../results/features_raw/features_val.csv
+  test_csv: ../../results/features_raw/features_test.csv
+  output_dir: ../../results/modeling/xgboost/tuned_optuna
+
+data:
+  meta_cols:
+    - path
+    - start_sec
+    - end_sec
+    - label
+    - recording_path
+    - subject_id
+    - age
+    - sex
+    - subject
+    - window_idx
+    - start
+    - end
+  dtype: float32
+
+training:
+  use_gpu: true
+  random_state: 42
+
+model_params:
+  tree_method: hist
+  device: cuda
+  random_state: 42
+  eval_metric: logloss
+
+evaluation:
+  default_threshold: 0.5
+
+plots:
+  save_pr_curve: true
+  save_roc_curve: true
+  save_threshold_plot: true
+  save_confusion_matrix: true
+  save_feature_importance: true
+
+optuna:
+  study_name: tuned_xgboost_optuna
+  direction: maximize
+  n_trials: 25
