@@ -12,9 +12,9 @@
 
 <br>
 
-![EEG Brain Activity](https://media0.giphy.com/media/aCdViG0BGCNa0/giphy.gif)
+![EEG Brain Activity — multi-channel signals from scalp electrodes](demo/fig/eeg_banner.png)
 
-*Real-time brain wave patterns — the signal we detect seizures from*
+*Multi-channel EEG signals (Fp1–O2) recorded via scalp electrodes — the raw neural data our models analyse for seizure detection*
 
 </div>
 
