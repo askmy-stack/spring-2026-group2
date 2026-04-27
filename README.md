@@ -618,16 +618,6 @@ outputs:
 
 ---
 
-## 👥 Team
-
-| Contributor | Role | Contribution |
-|-------------|------|-------------|
-| **Abhinay Sai Kamineni** | ML Lead | Improved LSTM benchmarks (im1–im7), Mamba/MoE pipeline, HuggingFace pretrained wrappers, meta-ensemble (4 strategies), unified checkpoint schema, research paper |
-| **Ritu** | Data Lead | Unified data pipeline (`src/dataloaders/`) — CHB-MIT + Siena datasets |
-| **Anu** | QA / Docs Lead | Full test suite (`tests/`), model documentation |
-
----
-
 ## 📄 Research Paper
 
 A comparative study draft is available at [`research_paper/MODELING_PIPELINE_RESEARCH_DRAFT.md`](research_paper/MODELING_PIPELINE_RESEARCH_DRAFT.md).
