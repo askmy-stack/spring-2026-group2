@@ -193,33 +193,33 @@ spring-2026-group2/
 
 ### All Models at a Glance
 
-| # | Family | Model Key | Architecture | Baseline F1 | Target F1 |
-|---|--------|-----------|-------------|:-----------:|:---------:|
-| 1 | Legacy LSTM | `vanilla_lstm` | 2-layer LSTM | 0.346 | — |
-| 2 | Legacy LSTM | `bilstm` | Bidirectional LSTM | 0.329 | — |
-| 3 | Legacy LSTM | `attention_bilstm` | BiLSTM + Multi-head attention | 0.348 | — |
-| 4 | Legacy LSTM | `cnn_lstm` | Multi-scale CNN + BiLSTM + Attention | **0.518** | — |
-| 5 | Benchmark | `m1_vanilla_lstm` | Refactored vanilla LSTM | — | 0.62+ |
-| 6 | Benchmark | `m2_bilstm` | Refactored BiLSTM | — | 0.65+ |
-| 7 | Benchmark | `m3_criss_cross` | Criss-Cross BiLSTM | — | 0.66+ |
-| 8 | Benchmark | `m4_cnn_lstm` | 3-branch CNN + BiLSTM + MHSA | — | 0.70+ |
-| 9 | Benchmark | `m5_feature_bilstm` | Feature-conditioned BiLSTM | — | 0.65+ |
-| 10 | Benchmark | `m6_graph_bilstm` | Graph-attention BiLSTM | — | 0.67+ |
-| 11 | Benchmark | `m7_attention_lstm` | Full self-attention LSTM | — | 0.68+ |
-| 12 | Improved | `im1`–`im7` | Above + MixUp · SWA · TTA · K-fold | — | 0.70–0.80 |
-| 13 | Ensemble | 5-model avg | Improved benchmark ensemble | — | **0.80–0.87** |
-| 14 | Mamba | `eeg_mamba` | State-space model (SSM) | — | TBD |
-| 15 | Mamba | `eeg_mamba_moe` | SSM + Mixture of Experts | — | TBD |
-| 16 | HF Custom | `baseline_cnn_1d` | 3-layer 1D CNN | — | TBD |
-| 17 | HF Custom | `enhanced_cnn_1d` | Dilated residual + SE attention | — | TBD |
-| 18 | HF Custom | `multiscale_cnn` | 4-branch multi-scale CNN | — | TBD |
-| 19 | HF Custom | `multiscale_attention_cnn` | Multi-scale + SE fusion | — | TBD |
-| 20 | HF Custom | `eegnet_local` | Local EEGNet (no HF dependency) | — | TBD |
-| 21 | HF Pretrained | `st_eegformer` | ViT transformer, 128 Hz, 16ch | — | TBD |
-| 22 | HF Pretrained | `bendr_pretrained` | Contrastive pretrained encoder | — | TBD |
-| 23 | HF Pretrained | `eegpt_pretrained` | GPT-style EEG foundation model | — | TBD |
-| 24 | HF Pretrained | `biot_pretrained` | Bio-informed transformer | — | TBD |
-| 25 | Meta-Ensemble | — | mean / weighted / rank / stacking | — | **best** |
+| # | Family | Model Key | Architecture |
+|---|--------|-----------|-------------|
+| 1 | Legacy LSTM | `vanilla_lstm` | 2-layer LSTM | 
+| 2 | Legacy LSTM | `bilstm` | Bidirectional LSTM | 
+| 3 | Legacy LSTM | `attention_bilstm` | BiLSTM + Multi-head attention | 
+| 4 | Legacy LSTM | `cnn_lstm` | Multi-scale CNN + BiLSTM + Attention | 
+| 5 | Benchmark | `m1_vanilla_lstm` | Refactored vanilla LSTM | 
+| 6 | Benchmark | `m2_bilstm` | Refactored BiLSTM | 
+| 7 | Benchmark | `m3_criss_cross` | Criss-Cross BiLSTM |
+| 8 | Benchmark | `m4_cnn_lstm` | 3-branch CNN + BiLSTM + MHSA | 
+| 9 | Benchmark | `m5_feature_bilstm` | Feature-conditioned BiLSTM | 
+| 10 | Benchmark | `m6_graph_bilstm` | Graph-attention BiLSTM | 
+| 11 | Benchmark | `m7_attention_lstm` | Full self-attention LSTM | 
+| 12 | Improved | `im1`–`im7` | Above + MixUp · SWA · TTA · K-fold | 
+| 13 | Ensemble | 5-model avg | Improved benchmark ensemble | 
+| 14 | Mamba | `eeg_mamba` | State-space model (SSM) | 
+| 15 | Mamba | `eeg_mamba_moe` | SSM + Mixture of Experts | 
+| 16 | HF Custom | `baseline_cnn_1d` | 3-layer 1D CNN | 
+| 17 | HF Custom | `enhanced_cnn_1d` | Dilated residual + SE attention | 
+| 18 | HF Custom | `multiscale_cnn` | 4-branch multi-scale CNN |
+| 19 | HF Custom | `multiscale_attention_cnn` | Multi-scale + SE fusion | 
+| 20 | HF Custom | `eegnet_local` | Local EEGNet (no HF dependency) | 
+| 21 | HF Pretrained | `st_eegformer` | ViT transformer, 128 Hz, 16ch | 
+| 22 | HF Pretrained | `bendr_pretrained` | Contrastive pretrained encoder |
+| 23 | HF Pretrained | `eegpt_pretrained` | GPT-style EEG foundation model | 
+| 24 | HF Pretrained | `biot_pretrained` | Bio-informed transformer |
+| 25 | Meta-Ensemble | — | mean / weighted / rank / stacking | 
 
 ---
 
