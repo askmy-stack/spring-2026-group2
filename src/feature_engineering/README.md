@@ -2,7 +2,7 @@
 
 Window-level feature extraction module for EEG seizure detection research.
 
-This module converts pre-generated window index CSV files into structured feature matrices suitable for classical ML models (LightGBM, XGBoost, Random Forest) and TabNet variants.
+This module converts pre-generated window index CSV files into structured feature matrices suitable for classical ML models (LightGBM, XGBoost, Random Forest) and TabNet.
 
 Each output CSV row represents one EEG window and contains:
 
