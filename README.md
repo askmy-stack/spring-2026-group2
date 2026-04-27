@@ -10,6 +10,12 @@
 [![Cloud: AWS g5.2xlarge](https://img.shields.io/badge/Cloud-AWS%20g5.2xlarge-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com/ec2/instance-types/g5/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+<br>
+
+![EEG Brain Activity](https://media0.giphy.com/media/aCdViG0BGCNa0/giphy.gif)
+
+*Real-time brain wave patterns — the signal we detect seizures from*
+
 </div>
 
 ---
@@ -111,80 +117,93 @@ graph TD
 
 ## 📁 Repository Structure
 
+> Organised to match the [GWU Capstone Sample_Capstone](https://github.com/amir-jafari/Capstone/tree/main/Sample_Capstone) template.
+
 ```
 spring-2026-group2/
 │
-├── 📄 README.md                     ← you are here
-├── 📄 requirements.txt              ← all dependencies
-├── 📄 check_setup.py                ← verify your environment
+├── 📄 README.md                         ← you are here
+├── 📄 requirements.txt                  ← all dependencies
 │
 ├── src/
-│   ├── dataloaders/                 ← unified data pipeline (CHB-MIT + Siena)
-│   │   ├── chbmit/                  ← CHB-MIT specific loader + downloader
-│   │   ├── siena/                   ← Siena dataset loader + downloader
-│   │   └── common/                  ← windowing, splits, tensor writer
+│   ├── component/                       ← ⭐ ALL Python source code
+│   │   ├── dataloaders/                 ← unified data pipeline (CHB-MIT + Siena)
+│   │   │   ├── chbmit/                  ← CHB-MIT specific loader + downloader
+│   │   │   ├── siena/                   ← Siena dataset loader + downloader
+│   │   │   └── common/                  ← windowing, splits, tensor writer
+│   │   │
+│   │   ├── features/                    ← 528 features/window
+│   │   │   ├── feature_engineering.py   ← time · freq · wavelet · entropy · connectivity
+│   │   │   ├── extractor.py
+│   │   │   └── fe.yaml
+│   │   │
+│   │   ├── models/
+│   │   │   ├── config.yaml              ← ⭐ single source of truth for all hyperparams
+│   │   │   ├── run_all_models.py        ← ⭐ run every model family at once
+│   │   │   ├── meta_ensemble.py         ← 4-strategy ensemble layer
+│   │   │   │
+│   │   │   ├── legacy_baseline/         ← Phase 0: original 4 LSTM baselines
+│   │   │   ├── lstm_benchmark_models/   ← Phase 1a: m1–m7 refactored benchmarks
+│   │   │   │   ├── architectures/       ← m1_vanilla_lstm.py … m7_attention_lstm.py
+│   │   │   │   └── train_baseline.py    ← CLI: --model [m1..m7 | all]
+│   │   │   │
+│   │   │   ├── improved_lstm_models/    ← Phase 1b: im1–im7 + MixUp/SWA/TTA/K-fold
+│   │   │   │   ├── architectures/
+│   │   │   │   ├── training/            ← kfold.py · mixup.py · swa.py · tta.py
+│   │   │   │   └── train.py
+│   │   │   │
+│   │   │   ├── hugging_face_mamba_moe/  ← Phase 3: HF pretrained + Mamba + MoE
+│   │   │   │   ├── architectures/
+│   │   │   │   │   ├── hf_cnn_models.py ← 8 custom CNNs + ST-EEGFormer
+│   │   │   │   │   ├── hf_factory.py    ← create_hf_model("st_eegformer", ...)
+│   │   │   │   │   ├── eeg_mamba.py     ← EEGMamba + EEGMambaMoE
+│   │   │   │   │   └── pretrained/      ← BENDR · BIOT · EEGPT wrappers
+│   │   │   │   ├── train_hf.py          ← CLI: --model [name | all]
+│   │   │   │   └── train_mamba.py       ← CLI: --model [eeg_mamba | all]
+│   │   │   │
+│   │   │   └── utils/                   ← shared utilities
+│   │   │       ├── checkpoint.py        ← unified save_checkpoint / load_checkpoint
+│   │   │       ├── losses.py            ← FocalLoss · AsymmetricLoss
+│   │   │       ├── metrics.py           ← F1 · AUC · sensitivity · threshold tuning
+│   │   │       └── hf_publish.py        ← push checkpoints to HuggingFace Hub
+│   │   │
+│   │   ├── EDA/                         ← exploratory analysis scripts
+│   │   ├── configs/                     ← fe.yaml and other config files
+│   │   ├── prepare_tensors.py           ← Step 1: EDF → .pt tensor splits
+│   │   └── check_setup.py              ← verify your environment
 │   │
-│   ├── features/                    ← 528 features/window
-│   │   ├── feature_engineering.py   ← time · freq · wavelet · entropy · connectivity
-│   │   ├── extractor.py
-│   │   └── fe.yaml                  ← feature config
+│   ├── tests/                           ← full test suite
+│   │   ├── test_meta_ensemble.py
+│   │   ├── test_metrics.py
+│   │   ├── test_no_nan_guard.py
+│   │   ├── test_labels.py
+│   │   └── test_pipeline.py
 │   │
-│   ├── prepare_tensors.py           ← Step 1: EDF → .pt tensor splits
-│   │
-│   ├── models/
-│   │   ├── config.yaml              ← ⭐ single source of truth for all hyperparams
-│   │   ├── run_all_models.py        ← ⭐ run every model family at once
-│   │   ├── meta_ensemble.py         ← 4-strategy ensemble layer
-│   │   │
-│   │   ├── legacy_baseline/         ← Phase 0: original 4 LSTM baselines
-│   │   │   └── results/             ← saved checkpoints + JSON metrics
-│   │   │
-│   │   ├── lstm_benchmark_models/   ← Phase 1a: m1–m7 refactored benchmarks
-│   │   │   ├── architectures/       ← m1_vanilla_lstm.py … m7_attention_lstm.py
-│   │   │   └── train_baseline.py    ← CLI: --model [m1..m7 | all]
-│   │   │
-│   │   ├── improved_lstm_models/    ← Phase 1b: im1–im7 + MixUp/SWA/TTA/K-fold
-│   │   │   ├── architectures/       ← im1_vanilla_lstm.py … im7_attention_lstm.py
-│   │   │   ├── training/            ← kfold.py · mixup.py · swa.py · tta.py
-│   │   │   └── train.py             ← CLI: --data_path --config
-│   │   │
-│   │   ├── hugging_face_mamba_moe/  ← Phase 3: HF pretrained + Mamba + MoE
-│   │   │   ├── architectures/
-│   │   │   │   ├── hf_cnn_models.py ← 8 custom CNN architectures + STEEGFormer
-│   │   │   │   ├── hf_factory.py    ← create_hf_model("st_eegformer", ...)
-│   │   │   │   ├── eeg_mamba.py     ← EEGMamba + EEGMambaMoE
-│   │   │   │   └── pretrained/      ← BENDR · BIOT · EEGPT · HFSTEEGFormer wrappers
-│   │   │   ├── train_hf.py          ← CLI: --model [name | all]
-│   │   │   └── train_mamba.py       ← CLI: --model [eeg_mamba | eeg_mamba_moe | all]
-│   │   │
-│   │   ├── _experimental/           ← WIP: approach2, approach3, ensemble_transformers
-│   │   │
-│   │   └── utils/                   ← shared utilities
-│   │       ├── checkpoint.py        ← unified save_checkpoint / load_checkpoint
-│   │       ├── losses.py            ← FocalLoss · AsymmetricLoss
-│   │       ├── metrics.py           ← F1 · AUC · sensitivity · threshold tuning
-│   │       ├── callbacks.py         ← EarlyStopping · ModelCheckpoint
-│   │       └── hf_publish.py        ← push checkpoints to HuggingFace Hub
-│   │
-│   ├── EDA/                         ← exploratory analysis scripts
-│   │   └── eda_chbmit.py            ← generates results/EDA/ figures
-│   │
-│   └── streamlit/                   ← interactive demo app
-│       └── app.py                   ← upload EDF → inference → visualisation
+│   ├── docs/                            ← code-level documentation
+│   └── shellscripts/                    ← shell/bash automation scripts
 │
-├── tests/                           ← full test suite
-│   ├── test_meta_ensemble.py
-│   ├── test_metrics.py
-│   ├── test_no_nan_guard.py
-│   ├── test_labels.py
-│   └── test_pipeline.py
+├── demo/                                ← interactive Streamlit app
+│   ├── app.py                           ← upload EDF → inference → visualisation
+│   ├── assets/                          ← static assets
+│   └── fig/                             ← screenshots / demo GIF
 │
-├── configs/
-│   └── fe.yaml                      ← feature engineering config
+├── cookbooks/                           ← Jupyter notebooks & EDA scripts
+│   └── eda_chbmit.py
 │
-├── research_paper/                  ← full paper draft (HTML + PDF + MD)
-├── results/                         ← EDA figures, model outputs (gitignored large files)
-└── doc/                             ← reference papers and summaries
+├── reports/
+│   ├── Progress_Report/                 ← weekly progress reports
+│   ├── Markdown_Report/                 ← MD summaries and improvements
+│   ├── Word_Report/                     ← Word document reports
+│   └── Latex_report/                    ← LaTeX formatted reports
+│
+├── research_paper/
+│   ├── Markdown/                        ← paper draft (MD + PDF + HTML)
+│   ├── Latex/                           ← LaTeX source (TBD)
+│   └── Word/                            ← Word version (TBD)
+│
+├── presentation/                        ← slide decks and presentation materials
+├── results/                             ← EDA figures, model outputs (gitignored large files)
+└── doc/                                 ← reference papers and Amir-Papers summaries
 ```
 
 ---
@@ -242,21 +261,21 @@ cd spring-2026-group2
 pip install -r requirements.txt
 
 # ── Step 3: Verify environment ─────────────────────────────────────────────────
-python check_setup.py
+python src/component/check_setup.py
 # Expected: all checks PASS
 
 # ── Step 4: Prepare data (download CHB-MIT + build tensor splits) ───────────────
-python src/prepare_tensors.py
-# Creates: src/data/processed/chbmit/{train,val,test}/*.pt
+python src/component/prepare_tensors.py
+# Creates: data/processed/chbmit/{train,val,test}/*.pt
 
 # ── Step 5: Train all models ────────────────────────────────────────────────────
-python src/models/run_all_models.py --data_path src/data/processed/chbmit
+python src/component/models/run_all_models.py --data_path data/processed/chbmit
 ```
 
 ### Launch the Demo App
 
 ```bash
-streamlit run src/streamlit/app.py
+streamlit run demo/app.py
 # Opens at http://localhost:8501
 # Upload any .edf file → instant inference + visualisation
 ```
@@ -281,7 +300,7 @@ streamlit run src/streamlit/app.py
 ### Also Supported: Siena Scalp EEG
 
 ```bash
-python src/dataloaders/siena/download.py --output_dir src/data/raw/siena
+python src/component/dataloaders/siena/download.py --output_dir data/raw/siena
 ```
 
 ### Preprocessing Pipeline
@@ -309,7 +328,7 @@ Raw .edf
 
 ```bash
 # Automated download via dataloaders
-python src/dataloaders/chbmit/download.py --output_dir src/data/raw/chbmit
+python src/component/dataloaders/chbmit/download.py --output_dir data/raw/chbmit
 
 # Or manual: https://physionet.org/content/chbmit/1.0.0/
 ```
@@ -318,16 +337,16 @@ python src/dataloaders/chbmit/download.py --output_dir src/data/raw/chbmit
 
 ## 🏋️ Training
 
-All training scripts read from `src/models/config.yaml` as the single source of truth for hyperparameters.
+All training scripts read from `src/component/models/config.yaml` as the single source of truth for hyperparameters.
 
 ---
 
 ### Run Everything at Once
 
 ```bash
-python src/models/run_all_models.py \
-    --data_path src/data/processed/chbmit \
-    --config src/models/config.yaml
+python src/component/models/run_all_models.py \
+    --data_path data/processed/chbmit \
+    --config src/component/models/config.yaml
 ```
 
 Runs Phase 1 (LSTM benchmarks) → Phase 2 (Improved LSTMs) → Phase 3 (Mamba) sequentially and saves all checkpoints + metrics.
@@ -338,13 +357,13 @@ Runs Phase 1 (LSTM benchmarks) → Phase 2 (Improved LSTMs) → Phase 3 (Mamba) 
 
 ```bash
 # Train all 7 benchmark models
-python -m src.models.lstm_benchmark_models.train_baseline \
+python -m src.component.models.lstm_benchmark_models.train_baseline \
     --model all \
-    --data_path src/data/processed/chbmit \
-    --config src/models/config.yaml
+    --data_path data/processed/chbmit \
+    --config src/component/models/config.yaml
 
 # Train a single model
-python -m src.models.lstm_benchmark_models.train_baseline --model m4_cnn_lstm
+python -m src.component.models.lstm_benchmark_models.train_baseline --model m4_cnn_lstm
 ```
 
 <details>
@@ -369,9 +388,9 @@ python -m src.models.lstm_benchmark_models.train_baseline --model m4_cnn_lstm
 Adds MixUp augmentation, Stochastic Weight Averaging (SWA), Test-Time Augmentation (TTA), and K-fold cross-validation on top of every benchmark model.
 
 ```bash
-python -m src.models.improved_lstm_models.train \
-    --data_path src/data/processed/chbmit \
-    --config src/models/config.yaml
+python -m src.component.models.improved_lstm_models.train \
+    --data_path data/processed/chbmit \
+    --config src/component/models/config.yaml
 ```
 
 ---
@@ -380,12 +399,12 @@ python -m src.models.improved_lstm_models.train \
 
 ```bash
 # Train all HF models (skips incompatible pretrained models automatically)
-python -m src.models.hugging_face_mamba_moe.train_hf --model all
+python -m src.component.models.hugging_face_mamba_moe.train_hf --model all
 
 # Train individual models
-python -m src.models.hugging_face_mamba_moe.train_hf --model st_eegformer
-python -m src.models.hugging_face_mamba_moe.train_hf --model multiscale_attention_cnn
-python -m src.models.hugging_face_mamba_moe.train_hf --model enhanced_cnn_1d
+python -m src.component.models.hugging_face_mamba_moe.train_hf --model st_eegformer
+python -m src.component.models.hugging_face_mamba_moe.train_hf --model multiscale_attention_cnn
+python -m src.component.models.hugging_face_mamba_moe.train_hf --model enhanced_cnn_1d
 ```
 
 <details>
@@ -408,11 +427,11 @@ python -m src.models.hugging_face_mamba_moe.train_hf --model enhanced_cnn_1d
 
 ```bash
 # Train both Mamba models
-python -m src.models.hugging_face_mamba_moe.train_mamba --model all
+python -m src.component.models.hugging_face_mamba_moe.train_mamba --model all
 
 # Train individually
-python -m src.models.hugging_face_mamba_moe.train_mamba --model eeg_mamba
-python -m src.models.hugging_face_mamba_moe.train_mamba --model eeg_mamba_moe
+python -m src.component.models.hugging_face_mamba_moe.train_mamba --model eeg_mamba
+python -m src.component.models.hugging_face_mamba_moe.train_mamba --model eeg_mamba_moe
 ```
 
 ---
@@ -422,7 +441,7 @@ python -m src.models.hugging_face_mamba_moe.train_mamba --model eeg_mamba_moe
 Used by TabNet and classical ML models (Random Forest, LightGBM, XGBoost).
 
 ```bash
-python src/features/feature_engineering.py --config configs/fe.yaml
+python src/component/features/feature_engineering.py --config src/component/configs/fe.yaml
 ```
 
 ### 528 Features per 1-Second Window
@@ -468,6 +487,15 @@ python src/features/feature_engineering.py --config configs/fe.yaml
 
 > **Key finding:** Multi-scale CNN feature extraction (kernels 3/15/31) before the LSTM gives the biggest single boost — F1 +50% and AUC +27% over vanilla LSTM, while being **3× faster** to train.
 
+### Phase 3 Results — CNN Models (Trained, 3 Epochs, Focal Loss γ=2)
+
+| Model | F1 | AUC-ROC | Precision | Recall | Accuracy | Threshold |
+|-------|----|---------|-----------|--------|----------|-----------|
+| **Enhanced CNN 1D** | **0.504** | **0.992** | 0.580 | 0.446 | 0.9991 | 0.55 |
+| Multiscale Attention CNN | 0.419 | 0.989 | 0.422 | 0.415 | 0.9988 | 0.85 |
+
+> **Key finding:** Enhanced CNN 1D achieves AUC-ROC of **0.992** — near-perfect discrimination — in just 3 epochs. High AUC with moderate F1 reflects class imbalance (~3% positives); threshold tuning and more epochs should push F1 significantly higher.
+
 ### Expected After Full Pipeline
 
 | Stage | F1 Range | AUC Range | Sensitivity |
@@ -484,7 +512,7 @@ python src/features/feature_engineering.py --config configs/fe.yaml
 Combines probability outputs from all trained models using four strategies.
 
 ```bash
-python -m src.models.meta_ensemble \
+python -m src.component.models.meta_ensemble \
     --strategy weighted \
     --checkpoint_dir results/checkpoints/
 ```
@@ -497,7 +525,7 @@ python -m src.models.meta_ensemble \
 | `logistic_stacking` | Logistic regression meta-learner on val probs | Maximum performance |
 
 ```python
-from src.models.meta_ensemble import MetaEnsemble
+from src.component.models.meta_ensemble import MetaEnsemble
 
 ensemble = MetaEnsemble(strategy="weighted")
 ensemble.fit(val_probs, val_labels)         # calibrate weights on val set
@@ -508,10 +536,10 @@ probs = ensemble.predict_proba(test_probs)  # combine all family outputs
 
 ## 💾 Checkpoint Schema
 
-All models use a unified checkpoint format via `src/models/utils/checkpoint.py`:
+All models use a unified checkpoint format via `src/component/models/utils/checkpoint.py`:
 
 ```python
-from src.models.utils.checkpoint import save_checkpoint, load_checkpoint
+from src.component.models.utils.checkpoint import save_checkpoint, load_checkpoint
 
 # Save
 save_checkpoint(
@@ -552,7 +580,7 @@ checkpoint = load_checkpoint("results/checkpoints/m4_cnn_lstm_best.pt")
 An interactive Streamlit app for real-time seizure detection on raw EEG files.
 
 ```bash
-streamlit run src/streamlit/app.py
+streamlit run demo/app.py
 # → http://localhost:8501
 ```
 
@@ -570,19 +598,19 @@ streamlit run src/streamlit/app.py
 
 ```bash
 # Full test suite
-pytest tests/ -v
+pytest src/tests/ -v
 
 # Specific files
-pytest tests/test_meta_ensemble.py -v
-pytest tests/test_metrics.py -v
-pytest tests/test_no_nan_guard.py -v
+pytest src/tests/test_meta_ensemble.py -v
+pytest src/tests/test_metrics.py -v
+pytest src/tests/test_no_nan_guard.py -v
 ```
 
 ---
 
 ## ⚙️ Configuration
 
-All hyperparameters live in `src/models/config.yaml`. Edit this file to change anything — all training scripts load it at startup.
+All hyperparameters live in `src/component/models/config.yaml`. Edit this file to change anything — all training scripts load it at startup.
 
 <details>
 <summary>Key config sections</summary>
@@ -620,7 +648,7 @@ outputs:
 
 ## 📄 Research Paper
 
-A comparative study draft is available at [`research_paper/MODELING_PIPELINE_RESEARCH_DRAFT.md`](research_paper/MODELING_PIPELINE_RESEARCH_DRAFT.md).
+A comparative study draft is available at [`research_paper/Markdown/MODELING_PIPELINE_RESEARCH_DRAFT.md`](research_paper/Markdown/MODELING_PIPELINE_RESEARCH_DRAFT.md).
 
 **Title:** *EEG Seizure Detection: A Comparative Study of LSTM, CNN-LSTM, Transformer, and State-Space Architectures*
 
