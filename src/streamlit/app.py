@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import importlib
 import sys
 import tempfile
 import time
@@ -12,7 +13,8 @@ import pandas as pd
 import streamlit as st
 import yaml
 from matplotlib import pyplot as plt
-from scipy.signal import spectrogram as scipy_spectrogram, welch
+from matplotlib.colors import LinearSegmentedColormap
+from scipy.signal import resample as scipy_resample, spectrogram as scipy_spectrogram, welch
 
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
@@ -24,6 +26,8 @@ SRC_DIR = APP_DIR.parent
 PROJECT_ROOT = SRC_DIR.parent
 SERVER_UPLOAD_DIR = PROJECT_ROOT / "uploads"
 HOME_IMAGE_PATH = APP_DIR / "assets" / "home_brain.png"
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
@@ -34,11 +38,83 @@ from data_loader.core.io import read_raw
 from data_loader.core.signal import normalize_signal, preprocess
 from feature.feature_engineering import AdvancedFeatureExtractor
 from models.improved_lstm_models.architectures import HierarchicalLSTM
-from models.lstm_benchmark_models.architectures import M4_CNNLSTM
+from model_adapters.cnn_lstm import CheckpointCNNLSTM
+
+
+SOFT_SCORE_CMAP = LinearSegmentedColormap.from_list(
+    "soft_score_cmap",
+    ["#f7d9c4", "#fff4cc", "#d8efe3", "#b8d8ff"],
+)
 
 
 def log_event(message: str) -> None:
     print(f"[streamlit] {message}", flush=True)
+
+
+def sync_window_from_slider(slider_key: str, number_key: str, value_key: str) -> None:
+    value = float(st.session_state[slider_key])
+    st.session_state[value_key] = value
+    st.session_state[number_key] = value
+
+
+def sync_window_from_number(number_key: str, slider_key: str, value_key: str) -> None:
+    value = float(st.session_state[number_key])
+    st.session_state[value_key] = value
+    st.session_state[slider_key] = value
+
+
+def load_trusted_checkpoint(checkpoint_path: Path) -> dict[str, object]:
+    # These checkpoints are local project artifacts created by this project.
+    # PyTorch 2.6 defaults to weights_only=True, which breaks older training
+    # checkpoints that include numpy scalar/config metadata.
+    return torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+
+
+def get_checkpoint_state_dict(checkpoint: dict[str, object]) -> dict[str, torch.Tensor]:
+    for key in ("model_state_dict", "state_dict", "model_state"):
+        state_dict = checkpoint.get(key)
+        if isinstance(state_dict, dict):
+            return state_dict
+    raise KeyError(
+        "Checkpoint does not contain a supported state dict key. "
+        "Expected one of: model_state_dict, state_dict, model_state."
+    )
+
+
+def build_model_from_checkpoint_builder(checkpoint: dict[str, object]) -> tuple[torch.nn.Module, int] | None:
+    model_builder = checkpoint.get("model_builder")
+    model_config = checkpoint.get("model_config")
+    if not isinstance(model_builder, str) or not isinstance(model_config, dict):
+        return None
+
+    module_name, _, attr_name = model_builder.rpartition(".")
+    if not module_name or not attr_name:
+        return None
+
+    module_aliases = {
+        "src.models.hugging_face_mamba_moe.architectures.hf_factory": "model_adapters.hf_factory",
+        "models.hugging_face_mamba_moe.architectures.hf_factory": "model_adapters.hf_factory",
+    }
+    module_name = module_aliases.get(module_name, module_name)
+
+    try:
+        builder_module = importlib.import_module(module_name)
+    except ModuleNotFoundError:
+        if module_name.startswith("src."):
+            builder_module = importlib.import_module(module_name.removeprefix("src."))
+        else:
+            raise
+    builder = getattr(builder_module, attr_name)
+    model_name = model_config.get("name")
+    if not isinstance(model_name, str):
+        return None
+
+    builder_kwargs = dict(model_config)
+    builder_kwargs.pop("name", None)
+    model = builder(model_name, **builder_kwargs)
+    if model is None:
+        return None
+    return model, 3
 
 
 def list_server_edf_files() -> list[Path]:
@@ -233,16 +309,42 @@ def make_spectrogram_figure(data: np.ndarray, channel_names: list[str], sfreq: f
     return fig
 
 
+def make_feature_summary_figure(feature_vector: np.ndarray, feature_names: list[str], top_k: int = 15) -> plt.Figure:
+    if feature_vector.size == 0:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.text(0.5, 0.5, "No features extracted", ha="center", va="center")
+        ax.axis("off")
+        return fig
+
+    top_k = min(top_k, feature_vector.shape[0])
+    top_idx = np.argsort(np.abs(feature_vector))[-top_k:][::-1]
+    top_vals = feature_vector[top_idx]
+    top_names = [feature_names[idx] for idx in top_idx]
+
+    fig, ax = plt.subplots(figsize=(10.5, max(5.5, top_k * 0.36)))
+    colors = ["#73a9ff" if value >= 0 else "#f2a766" for value in top_vals]
+    y = np.arange(top_k)
+    ax.barh(y, top_vals, color=colors)
+    ax.set_yticks(y)
+    ax.set_yticklabels(top_names, fontsize=8)
+    ax.invert_yaxis()
+    ax.set_title("Top extracted features by absolute value")
+    ax.set_xlabel("Feature value")
+    ax.grid(axis="x", alpha=0.2)
+    fig.tight_layout()
+    return fig
+
+
 def apply_app_theme() -> None:
     st.markdown(
         """
         <style>
         .stApp {
             background:
-                radial-gradient(circle at 15% 20%, rgba(0, 218, 222, 0.16), transparent 22%),
-                radial-gradient(circle at 85% 15%, rgba(45, 97, 255, 0.16), transparent 18%),
-                linear-gradient(180deg, #07111f 0%, #0d1a2b 48%, #0a1421 100%);
-            color: #eaf7ff;
+                radial-gradient(circle at 15% 20%, rgba(163, 214, 255, 0.26), transparent 24%),
+                radial-gradient(circle at 85% 15%, rgba(255, 223, 186, 0.20), transparent 20%),
+                linear-gradient(180deg, #f8fbff 0%, #eef5fb 52%, #f7fafc 100%);
+            color: #17324d;
         }
         .block-container {
             padding-top: 1.5rem;
@@ -250,7 +352,7 @@ def apply_app_theme() -> None:
             max-width: 1280px;
         }
         h1, h2, h3, label, p, div, span {
-            color: #eaf7ff;
+            color: #17324d;
         }
         .stApp a,
         .stApp button,
@@ -258,22 +360,22 @@ def apply_app_theme() -> None:
         .stApp [data-testid="stDecoration"] *,
         .stApp [data-testid="stStatusWidget"] *,
         .stApp [data-testid="stHeader"] * {
-            color: #123b66 !important;
+            color: #325d88 !important;
         }
         div[data-testid="stMetric"] {
-            background: rgba(8, 20, 33, 0.72);
-            border: 1px solid rgba(75, 204, 255, 0.16);
+            background: rgba(255, 255, 255, 0.80);
+            border: 1px solid rgba(109, 154, 201, 0.24);
             border-radius: 18px;
             padding: 0.8rem 1rem;
-            box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
+            box-shadow: 0 14px 30px rgba(85, 119, 149, 0.12);
         }
         div[data-baseweb="select"] > div,
         div[data-baseweb="input"] > div,
         div[data-testid="stFileUploader"] section,
         div[data-testid="stMultiSelect"] > div {
-            background: rgba(8, 20, 33, 0.72) !important;
+            background: rgba(255, 255, 255, 0.84) !important;
             border-radius: 16px !important;
-            border: 1px solid rgba(75, 204, 255, 0.16) !important;
+            border: 1px solid rgba(109, 154, 201, 0.24) !important;
         }
         div[data-baseweb="select"] span,
         div[data-baseweb="input"] input,
@@ -282,29 +384,29 @@ def apply_app_theme() -> None:
         div[role="listbox"] *,
         li[role="option"] *,
         ul[role="listbox"] * {
-            color: #123b66 !important;
+            color: #17324d !important;
         }
         div[role="listbox"],
         ul[role="listbox"] {
-            background: #f4f8fc !important;
+            background: #ffffff !important;
         }
         button[kind="primary"] {
             border-radius: 999px !important;
-            background: linear-gradient(90deg, #00d7d6 0%, #2f8cff 100%) !important;
+            background: linear-gradient(90deg, #9edbcf 0%, #a8cfff 100%) !important;
             border: none !important;
-            color: #07111f !important;
+            color: #17324d !important;
             font-weight: 700 !important;
         }
         button[kind="secondary"],
         button[kind="secondary"] * {
-            color: #123b66 !important;
+            color: #325d88 !important;
         }
         .eeg-shell {
-            background: rgba(8, 20, 33, 0.68);
-            border: 1px solid rgba(75, 204, 255, 0.14);
+            background: rgba(255, 255, 255, 0.74);
+            border: 1px solid rgba(109, 154, 201, 0.20);
             border-radius: 28px;
             padding: 1.25rem 1.4rem 0.9rem 1.4rem;
-            box-shadow: 0 22px 44px rgba(0, 0, 0, 0.24);
+            box-shadow: 0 22px 44px rgba(85, 119, 149, 0.12);
             margin-bottom: 1rem;
         }
         .hero-title {
@@ -313,18 +415,26 @@ def apply_app_theme() -> None:
             line-height: 1.05;
             letter-spacing: -0.03em;
             margin-bottom: 0.35rem;
+            color: #17324d;
         }
         .hero-sub {
-            color: #91c8dd;
+            color: #5f7f9e;
             font-size: 0.98rem;
             margin-bottom: 0;
         }
         .image-card {
-            background: rgba(8, 20, 33, 0.62);
-            border: 1px solid rgba(75, 204, 255, 0.14);
+            background: rgba(255, 255, 255, 0.74);
+            border: 1px solid rgba(109, 154, 201, 0.20);
             border-radius: 24px;
             padding: 0.8rem;
-            box-shadow: 0 18px 38px rgba(0, 0, 0, 0.22);
+            box-shadow: 0 18px 38px rgba(85, 119, 149, 0.10);
+        }
+        div[data-testid="stTabs"] button {
+            color: #5f7f9e !important;
+        }
+        div[data-testid="stTabs"] button[aria-selected="true"] {
+            color: #17324d !important;
+            font-weight: 700 !important;
         }
         </style>
         """,
@@ -341,15 +451,6 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         sfreq=256,
         window_sec=1.0,
         notes="Engineered features extracted from the selected EEG window and scored with the saved TabNet checkpoint.",
-    ),
-    "deepconvnet": ModelProfile(
-        key="deepconvnet",
-        label="DeepConvNet",
-        channels=16,
-        samples=256,
-        sfreq=256,
-        window_sec=1.0,
-        notes="Uses the project CNN pipeline profile copied from saved training config.",
     ),
     "enhanced_cnn_1d": ModelProfile(
         key="enhanced_cnn_1d",
@@ -369,15 +470,6 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         window_sec=1.0,
         notes="Uses the project CNN pipeline profile copied from saved training config.",
     ),
-    "lstm": ModelProfile(
-        key="lstm",
-        label="LSTM",
-        channels=16,
-        samples=256,
-        sfreq=256,
-        window_sec=1.0,
-        notes="Uses the saved project LSTM checkpoint from the outputs folder.",
-    ),
     "cnn_lstm": ModelProfile(
         key="cnn_lstm",
         label="CNN LSTM",
@@ -387,24 +479,24 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         window_sec=1.0,
         notes="Uses the saved project CNN-LSTM checkpoint from the outputs folder.",
     ),
-    "custom": ModelProfile(
-        key="custom",
-        label="Custom",
+    "st_eegformer": ModelProfile(
+        key="st_eegformer",
+        label="ST-EEGFormer",
         channels=16,
         samples=256,
         sfreq=256,
         window_sec=1.0,
-        notes="Set your own expected shape in the sidebar.",
+        notes="Uses the saved ST-EEGFormer checkpoint loaded through the HF compatibility builder.",
     ),
 }
 
 APP_MODEL_KEYS = ("enhanced_cnn_1d", "multiscale_attention_cnn", "tabnet_features", "custom")
-EXCLUDED_MODEL_KEYS = {"deepconvnet", "st_eegformer", "custom"}
-PREFERRED_MODEL_ORDER = (
+EXCLUDED_MODEL_KEYS = {"custom"}
+SUPPORTED_STREAMLIT_MODELS = (
     "enhanced_cnn_1d",
     "multiscale_attention_cnn",
-    "lstm",
     "cnn_lstm",
+    "st_eegformer",
     "tabnet_features",
 )
 
@@ -428,6 +520,22 @@ def list_local_checkpoint_model_names() -> list[str]:
     return model_names
 
 
+def build_available_model_options(
+    available_artifact_map: dict[str, object],
+    local_checkpoint_models: set[str],
+) -> list[str]:
+    valid_checkpoint_models = {
+        name for name in (set(available_artifact_map.keys()) | set(local_checkpoint_models))
+        if name not in EXCLUDED_MODEL_KEYS
+    }
+
+    ordered: list[str] = []
+    for name in SUPPORTED_STREAMLIT_MODELS:
+        if name == "tabnet_features" or name in valid_checkpoint_models:
+            ordered.append(name)
+    return ordered
+
+
 def get_local_checkpoint_path(model_name: str) -> Path | None:
     model_dir = PROJECT_ROOT / "src" / "outputs" / "models" / model_name
     if not model_dir.exists():
@@ -443,11 +551,23 @@ def get_local_checkpoint_path(model_name: str) -> Path | None:
 
 
 def build_model_from_checkpoint(model_name: str, checkpoint: dict[str, object]) -> tuple[torch.nn.Module, int]:
+    built_from_builder = build_model_from_checkpoint_builder(checkpoint)
+    if built_from_builder is not None:
+        return built_from_builder
+
     model_config = dict(checkpoint.get("model_config", {}))
     if model_name == "lstm":
         return HierarchicalLSTM(**model_config), 4
     if model_name == "cnn_lstm":
-        return M4_CNNLSTM(**model_config), 3
+        cnn_lstm_cfg = dict(checkpoint.get("config", {}))
+        return CheckpointCNNLSTM(
+            n_channels=int(cnn_lstm_cfg.get("n_channels", 16)),
+            time_steps=int(cnn_lstm_cfg.get("time_steps", 256)),
+            hidden_size=int(cnn_lstm_cfg.get("hidden_size", 256)),
+            num_layers=int(cnn_lstm_cfg.get("num_layers", 3)),
+            num_heads=int(cnn_lstm_cfg.get("num_heads", 4)),
+            dropout=float(cnn_lstm_cfg.get("dropout", 0.4)),
+        ), 3
 
     config = checkpoint.get("config", {})
     model_kwargs = {
@@ -487,6 +607,31 @@ def zscore_per_channel(array: np.ndarray) -> np.ndarray:
     std = array.std(axis=1, keepdims=True)
     std = np.where(std < 1e-8, 1.0, std)
     return (array - mean) / std
+
+
+def align_window_to_model_input(
+    array: np.ndarray,
+    source_sfreq: float,
+    target_channels: int,
+    target_samples: int,
+    target_sfreq: float,
+) -> tuple[np.ndarray, dict[str, str]]:
+    info: dict[str, str] = {}
+    aligned = array.astype(np.float32, copy=False)
+
+    if aligned.shape[0] != target_channels:
+        aligned, shape_info = adapt_window(aligned, target_channels=target_channels, target_samples=aligned.shape[1])
+        info.update(shape_info)
+
+    if abs(float(source_sfreq) - float(target_sfreq)) > 1e-6:
+        resampled = scipy_resample(aligned, target_samples, axis=1)
+        aligned = np.asarray(resampled, dtype=np.float32)
+        info["resample"] = f"Resampled from {source_sfreq:.2f} Hz to {target_sfreq:.2f} Hz."
+    elif aligned.shape[1] != target_samples:
+        aligned, sample_info = adapt_window(aligned, target_channels=target_channels, target_samples=target_samples)
+        info.update(sample_info)
+
+    return aligned.astype(np.float32, copy=False), info
 
 
 def process_edf_upload(
@@ -706,12 +851,14 @@ def load_inference_bundle(model_name: str) -> dict[str, object]:
     if checkpoint_path is None:
         paths = artifact_paths(model_name)
         checkpoint_path = paths.checkpoint_path
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = load_trusted_checkpoint(checkpoint_path)
     config = checkpoint.get("config", {})
+    model_config = dict(checkpoint.get("model_config", {}))
+    input_spec = dict(checkpoint.get("input_spec", {}))
     threshold = float(checkpoint.get("best_threshold", checkpoint.get("optimal_threshold", 0.5)))
 
     model, input_rank = build_model_from_checkpoint(model_name, checkpoint)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model.load_state_dict(get_checkpoint_state_dict(checkpoint))
     model.eval()
     log_event(
         f"load_inference_bundle done model={model_name} checkpoint={checkpoint_path} "
@@ -721,6 +868,8 @@ def load_inference_bundle(model_name: str) -> dict[str, object]:
         "model": model,
         "threshold": threshold,
         "config": config,
+        "model_config": model_config,
+        "input_spec": input_spec,
         "input_rank": input_rank,
     }
 
@@ -740,7 +889,7 @@ def load_tabnet_bundle() -> dict[str, object]:
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"TabNet checkpoint not found: {checkpoint_path}")
 
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = load_trusted_checkpoint(checkpoint_path)
     args = checkpoint.get("args", {})
     state_dict = checkpoint["network_state_dict"]
     input_dim = int(state_dict["tabnet.initial_bn.weight"].shape[0])
@@ -821,13 +970,50 @@ def predict_tabnet_window(window_data: np.ndarray, sfreq: float, cfg: dict) -> d
     }
 
 
-def predict_single_window(model_name: str, prepared_array: np.ndarray) -> dict[str, float | int | str]:
+def predict_single_window(
+    model_name: str,
+    prepared_array: np.ndarray,
+    processed_sfreq: float,
+) -> dict[str, float | int | str]:
     started_at = time.perf_counter()
     log_event(f"predict_single_window start model={model_name}")
     bundle = load_inference_bundle(model_name)
     model = bundle["model"]
     threshold = float(bundle["threshold"])
-    x = torch.from_numpy(prepared_array).unsqueeze(0)
+    config = bundle.get("config", {})
+    model_config = bundle.get("model_config", {})
+    input_spec = bundle.get("input_spec", {})
+
+    target_channels = int(
+        model_config.get(
+            "in_channels",
+            config.get("channels", input_spec.get("channels", prepared_array.shape[0])),
+        )
+    )
+    target_samples = int(
+        model_config.get(
+            "n_times",
+            config.get("samples", prepared_array.shape[1]),
+        )
+    )
+    target_sfreq = float(
+        model_config.get(
+            "sfreq",
+            config.get("sfreq", processed_sfreq),
+        )
+    )
+
+    model_array, adaptation_info = align_window_to_model_input(
+        prepared_array,
+        source_sfreq=float(processed_sfreq),
+        target_channels=target_channels,
+        target_samples=target_samples,
+        target_sfreq=target_sfreq,
+    )
+    if adaptation_info:
+        log_event(f"predict_single_window adapted model={model_name} details={adaptation_info}")
+
+    x = torch.from_numpy(model_array).unsqueeze(0)
     if int(bundle.get("input_rank", 3)) == 4:
         x = x.unsqueeze(1)
     with torch.no_grad():
@@ -857,6 +1043,7 @@ def render_case_selector(section_key: str, case_title: str, window_sec: float) -
     st.markdown(f"### {case_title}")
     slider_key = f"{section_key}_window_slider"
     number_key = f"{section_key}_window_number"
+    value_key = f"{section_key}_window_value"
     widget_file_key = f"{section_key}_widget_file_key"
     input_mode = st.radio(
         "Input source",
@@ -919,25 +1106,33 @@ def render_case_selector(section_key: str, case_title: str, window_sec: float) -
 
     if st.session_state.get(widget_file_key) != file_key:
         st.session_state[widget_file_key] = file_key
-        st.session_state[slider_key] = 0.0
-        st.session_state[number_key] = 0.0
+        st.session_state[value_key] = 0.0
     else:
-        st.session_state[slider_key] = min(float(st.session_state.get(slider_key, 0.0)), float(edf_window_max_start))
-        st.session_state[number_key] = min(float(st.session_state.get(number_key, 0.0)), float(edf_window_max_start))
+        st.session_state[value_key] = min(
+            float(st.session_state.get(value_key, 0.0)),
+            float(edf_window_max_start),
+        )
 
-    window_start_sec = st.slider(
+    st.session_state[slider_key] = float(st.session_state.get(value_key, 0.0))
+    st.session_state[number_key] = float(st.session_state.get(value_key, 0.0))
+
+    st.slider(
         "EDF window start (seconds)",
         min_value=0.0,
         max_value=float(edf_window_max_start),
         step=float(window_sec),
         key=slider_key,
+        on_change=sync_window_from_slider,
+        args=(slider_key, number_key, value_key),
     )
-    manual_window_start_sec = st.number_input(
+    st.number_input(
         "Manual start (s)",
         min_value=0.0,
         max_value=float(edf_window_max_start),
         step=float(window_sec),
         key=number_key,
+        on_change=sync_window_from_number,
+        args=(number_key, slider_key, value_key),
     )
 
     return {
@@ -946,7 +1141,7 @@ def render_case_selector(section_key: str, case_title: str, window_sec: float) -
         "file_bytes": file_bytes,
         "active_name": active_name,
         "active_source_label": active_source_label,
-        "window_start_sec": float(manual_window_start_sec),
+        "window_start_sec": float(st.session_state[value_key]),
         "file_key": file_key,
     }
 
@@ -1004,6 +1199,7 @@ def render_case_eda_panel(
     processed: dict[str, object],
     standard_channel_names: list[str],
     expected_sfreq: int,
+    feature_cfg: dict,
 ) -> None:
     prepared_array = processed["array"]
     input_metadata = processed["input_metadata"]
@@ -1015,7 +1211,9 @@ def render_case_eda_panel(
     metric_cols[1].metric("Freq", f"{int(input_metadata.get('processed_sfreq', expected_sfreq))} Hz")
     metric_cols[2].metric("Window", f"{processed['window_start_sec']:.1f} s")
 
-    trace_tab, band_tab, spectral_tab, corr_tab = st.tabs(["Trace", "Bands", "Spectral", "Connectivity"])
+    trace_tab, band_tab, spectral_tab, corr_tab, features_tab = st.tabs(
+        ["Trace", "Bands", "Spectral", "Connectivity", "Features"]
+    )
     with trace_tab:
         st.pyplot(
             make_eeg_preview_figure(
@@ -1063,6 +1261,29 @@ def render_case_eda_panel(
             clear_figure=True,
             width="stretch",
         )
+    with features_tab:
+        feature_vector, feature_names = extract_tabnet_features(
+            prepared_array,
+            sfreq=float(input_metadata.get("processed_sfreq", expected_sfreq)),
+            cfg=feature_cfg,
+        )
+        st.metric("Feature Count", int(feature_vector.shape[0]))
+        st.pyplot(
+            make_feature_summary_figure(feature_vector, feature_names),
+            clear_figure=True,
+            width="stretch",
+        )
+        feature_df = pd.DataFrame(
+            {
+                "feature": feature_names,
+                "value": feature_vector,
+                "abs_value": np.abs(feature_vector),
+            }
+        ).sort_values("abs_value", ascending=False)
+        st.dataframe(
+            feature_df[["feature", "value"]].head(30).style.format({"value": "{:.6f}"}),
+            width="stretch",
+        )
 
 
 def render_case_model_panel(processed: dict[str, object], results: list[dict[str, object]]) -> None:
@@ -1085,7 +1306,7 @@ def render_case_model_panel(processed: dict[str, object], results: list[dict[str
                 "threshold": "{:.2f}",
             }
         )
-        .background_gradient(cmap="RdYlGn", subset=numeric_cols, vmin=0.0, vmax=1.0)
+        .background_gradient(cmap=SOFT_SCORE_CMAP, subset=numeric_cols, vmin=0.0, vmax=1.0)
         .set_properties(subset=numeric_cols, **{"color": "#111827", "font-weight": "600"})
     )
     st.dataframe(styled_df, width="stretch")
@@ -1110,7 +1331,13 @@ def run_all_model_predictions(
                 )
             )
         else:
-            results.append(predict_single_window(model_name, prepared_array))
+            results.append(
+                predict_single_window(
+                    model_name,
+                    prepared_array,
+                    processed_sfreq=float(input_metadata.get("processed_sfreq", expected_sfreq)),
+                )
+            )
     return results
 
 
@@ -1147,12 +1374,17 @@ def render_home_tab() -> None:
 
 
 def sync_selection_state(section_key: str, selection: dict[str, object] | None) -> None:
-    file_key_state = f"{section_key}_file_key"
+    selection_key_state = f"{section_key}_selection_key"
     processed_state = f"{section_key}_processed"
     results_state = f"{section_key}_results"
-    new_file_key = selection.get("file_key") if selection is not None else None
-    if st.session_state.get(file_key_state) != new_file_key:
-        st.session_state[file_key_state] = new_file_key
+    new_selection_key = None
+    if selection is not None:
+        new_selection_key = (
+            f"{selection.get('file_key')}|"
+            f"{float(selection.get('window_start_sec', 0.0)):.3f}"
+        )
+    if st.session_state.get(selection_key_state) != new_selection_key:
+        st.session_state[selection_key_state] = new_selection_key
         st.session_state[processed_state] = None
         st.session_state[results_state] = None
 
@@ -1205,6 +1437,7 @@ def render_comparison_column(
                 processed=processed,
                 standard_channel_names=standard_channel_names,
                 expected_sfreq=expected_sfreq,
+                feature_cfg=feature_cfg,
             )
         else:
             st.info("Select a file and load this case to view EDA.")
@@ -1300,13 +1533,7 @@ def main():
     available_artifacts = list_available_artifacts()
     available_artifact_map = {item["model_name"]: item for item in available_artifacts}
     local_checkpoint_models = set(list_local_checkpoint_model_names())
-    available_model_options = [
-        name for name in PREFERRED_MODEL_ORDER
-        if (
-            name == "tabnet_features"
-            or ((name in available_artifact_map or name in local_checkpoint_models) and name not in EXCLUDED_MODEL_KEYS)
-        )
-    ]
+    available_model_options = build_available_model_options(available_artifact_map, local_checkpoint_models)
     project_cfg = load_project_config()
     feature_cfg = load_feature_config()
     standard_channel_names = get_standard_channel_names(project_cfg, fallback_count=16)
