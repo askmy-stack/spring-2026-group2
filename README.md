@@ -635,9 +635,3 @@ A comparative study draft is available at [`research_paper/MODELING_PIPELINE_RES
 **Title:** *EEG Seizure Detection: A Comparative Study of LSTM, CNN-LSTM, Transformer, and State-Space Architectures*
 
 ---
-
-<div align="center">
-
-Made with ☕ and too many GPU hours &nbsp;·&nbsp; CHB-MIT dataset via [PhysioNet](https://physionet.org/content/chbmit/1.0.0/)
-
-</div>
