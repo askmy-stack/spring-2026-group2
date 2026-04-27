@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧠 EEG Seizure Detection — spring-2026-group2
+# 🧠 EEG Seizure Detection & Multi Model Analysis (spring-2026-group2)
 
 ### Subject-independent seizure detection across 15+ neural architectures on the CHB-MIT pediatric EEG corpus
 
