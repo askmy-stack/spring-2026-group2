@@ -7,10 +7,10 @@ criss-cross attention), and leaves heavy regularisation to the trainer
 positional embedding for a truncated-normal init which is already the
 case in the parent, so no change needed here.
 """
-from src.models.lstm_benchmark_models.architectures.m3_criss_cross import (
+from src.component.models.lstm_benchmark_models.architectures.m3_criss_cross import (
     M3_CrissCrossBiLSTM,
 )
-from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
+from src.component.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM3_CrissCrossBiLSTM(M3_CrissCrossBiLSTM):

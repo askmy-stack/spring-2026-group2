@@ -31,7 +31,7 @@ import yaml
 from torch import nn
 from torch.nn import functional as F
 
-from src.models.utils.checkpoint import save_checkpoint
+from src.component.models.utils.checkpoint import save_checkpoint
 from .architectures.hf_factory import create_hf_model, list_hf_models
 
 logger = logging.getLogger(__name__)

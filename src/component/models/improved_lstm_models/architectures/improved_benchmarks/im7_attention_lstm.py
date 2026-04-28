@@ -3,10 +3,10 @@
 Deeper stack (4 self-attention blocks instead of 2) and 8 heads instead
 of 4. Commit 2 wires DropPath into the residual paths.
 """
-from src.models.lstm_benchmark_models.architectures.m7_attention_lstm import (
+from src.component.models.lstm_benchmark_models.architectures.m7_attention_lstm import (
     M7_AttentionLSTM,
 )
-from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
+from src.component.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM7_AttentionLSTM(M7_AttentionLSTM):

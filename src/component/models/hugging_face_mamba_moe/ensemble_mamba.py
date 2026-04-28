@@ -33,8 +33,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from src.models.utils.checkpoint import load_checkpoint
-from src.models.utils.metrics import (
+from src.component.models.utils.checkpoint import load_checkpoint
+from src.component.models.utils.metrics import (
     compute_f1_score, compute_auc_roc, compute_sensitivity,
     compute_specificity, find_optimal_threshold,
 )

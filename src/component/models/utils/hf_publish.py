@@ -243,7 +243,7 @@ Decision threshold (tuned on val for F1): **{threshold:.3f}**.
 ## Load
 
 ```python
-from src.models.utils.hf_publish import rehydrate_from_hub
+from src.component.models.utils.hf_publish import rehydrate_from_hub
 model, payload = rehydrate_from_hub(
     repo_id="...",       # e.g. "your-user/chbmit-seizure-models"
     subfolder="{name}",

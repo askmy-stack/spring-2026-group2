@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.models.meta_ensemble import (
+from src.component.models.meta_ensemble import (
     combine, evaluate, _load_families, _rank_average, _shared_labels,
 )
 

@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from src.models.lstm_benchmark_models.train_baseline import load_config, _get_device
+from src.component.models.lstm_benchmark_models.train_baseline import load_config, _get_device
 from .ensemble import load_ensemble_checkpoints, evaluate_ensemble
 
 logger = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 """Tests for src/models/utils/metrics."""
 import numpy as np
 import pytest
-from src.models.utils.metrics import compute_f1_score, compute_auc_roc, compute_sensitivity
+from src.component.models.utils.metrics import compute_f1_score, compute_auc_roc, compute_sensitivity
 
 
 def test_f1_score_perfect():

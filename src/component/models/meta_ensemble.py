@@ -48,7 +48,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-from src.models.utils.metrics import (
+from src.component.models.utils.metrics import (
     compute_f1_score, compute_auc_roc, compute_sensitivity,
     compute_specificity, find_optimal_threshold,
 )

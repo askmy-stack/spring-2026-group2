@@ -1,8 +1,8 @@
 """IM6: Improved Graph BiLSTM — subclass of M6_GraphBiLSTM."""
-from src.models.lstm_benchmark_models.architectures.m6_graph_bilstm import (
+from src.component.models.lstm_benchmark_models.architectures.m6_graph_bilstm import (
     M6_GraphBiLSTM,
 )
-from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
+from src.component.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM6_GraphBiLSTM(M6_GraphBiLSTM):

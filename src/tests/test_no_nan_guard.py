@@ -14,7 +14,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from src.models.hugging_face_mamba_moe import train_mamba
+from src.component.models.hugging_face_mamba_moe import train_mamba
 
 
 class _DummyModel(nn.Module):

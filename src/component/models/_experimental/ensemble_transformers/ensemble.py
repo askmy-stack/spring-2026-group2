@@ -11,8 +11,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.models.lstm_benchmark_models import get_benchmark_model, MODEL_REGISTRY
-from src.models.utils.metrics import compute_f1_score, compute_auc_roc, compute_sensitivity
+from src.component.models.lstm_benchmark_models import get_benchmark_model, MODEL_REGISTRY
+from src.component.models.utils.metrics import compute_f1_score, compute_auc_roc, compute_sensitivity
 from .architectures.m7_vq_transformer import M7_VQTransformer
 
 logger = logging.getLogger(__name__)

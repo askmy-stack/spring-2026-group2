@@ -27,7 +27,7 @@ from typing import Any, Dict, Tuple
 import numpy as np
 import torch
 
-from src.models.utils.checkpoint import load_checkpoint
+from src.component.models.utils.checkpoint import load_checkpoint
 
 logger = logging.getLogger(__name__)
 

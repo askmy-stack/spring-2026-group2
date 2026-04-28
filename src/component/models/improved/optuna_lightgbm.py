@@ -9,11 +9,11 @@ import lightgbm as lgb
 import optuna
 import pandas as pd
 
-from src.models.utils.config_utils import load_config
-from src.models.utils.data_utils import load_split, validate_feature_columns
-from src.models.utils.io_utils import ensure_dir, save_csv, save_json
-from src.models.utils.metric_utils import compute_binary_metrics, sweep_thresholds_for_f1
-from src.models.utils.plot_utils import (
+from src.component.models.utils.config_utils import load_config
+from src.component.models.utils.data_utils import load_split, validate_feature_columns
+from src.component.models.utils.io_utils import ensure_dir, save_csv, save_json
+from src.component.models.utils.metric_utils import compute_binary_metrics, sweep_thresholds_for_f1
+from src.component.models.utils.plot_utils import (
     save_confusion_matrix_plot,
     save_feature_importance_plot,
     save_pr_curve,

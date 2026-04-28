@@ -18,14 +18,14 @@ import torch.nn as nn
 import yaml
 from torch.utils.data import DataLoader, TensorDataset
 
-from src.models.utils.losses import FocalLoss
-from src.models.utils.metrics import (
+from src.component.models.utils.losses import FocalLoss
+from src.component.models.utils.metrics import (
     compute_f1_score, compute_auc_roc, compute_sensitivity,
     compute_specificity, find_optimal_threshold,
 )
-from src.models.utils.callbacks import EarlyStopping, clip_gradients
-from src.models.utils.config_validator import validate_config
-from src.models.utils.checkpoint import save_checkpoint
+from src.component.models.utils.callbacks import EarlyStopping, clip_gradients
+from src.component.models.utils.config_validator import validate_config
+from src.component.models.utils.checkpoint import save_checkpoint
 from .architectures import get_benchmark_model, MODEL_REGISTRY
 
 logger = logging.getLogger(__name__)

@@ -4,10 +4,10 @@ Commit 1 skeleton: bumps backbone width defaults and accepts a
 ``stochastic_depth`` kwarg. Commit 2 wires DropPath + SE into the
 residual paths.
 """
-from src.models.lstm_benchmark_models.architectures.m1_vanilla_lstm import (
+from src.component.models.lstm_benchmark_models.architectures.m1_vanilla_lstm import (
     M1_VanillaLSTM,
 )
-from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
+from src.component.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM1_VanillaLSTM(M1_VanillaLSTM):

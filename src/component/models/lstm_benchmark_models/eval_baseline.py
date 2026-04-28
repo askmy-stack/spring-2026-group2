@@ -14,7 +14,7 @@ from typing import Dict
 
 import torch
 
-from src.models.utils.metrics import compute_f1_score, compute_auc_roc, compute_sensitivity
+from src.component.models.utils.metrics import compute_f1_score, compute_auc_roc, compute_sensitivity
 from .architectures import get_benchmark_model, MODEL_REGISTRY
 from .train_baseline import load_config, _build_data_loaders, _get_device, _evaluate_on_test
 

@@ -1,6 +1,6 @@
 """IM2: Improved BiLSTM — subclass of M2_BiLSTM."""
-from src.models.lstm_benchmark_models.architectures.m2_bilstm import M2_BiLSTM
-from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
+from src.component.models.lstm_benchmark_models.architectures.m2_bilstm import M2_BiLSTM
+from src.component.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM2_BiLSTM(M2_BiLSTM):

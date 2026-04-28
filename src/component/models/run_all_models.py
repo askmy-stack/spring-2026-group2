@@ -9,10 +9,10 @@ import logging
 from pathlib import Path
 from typing import Dict
 
-from src.models.lstm_benchmark_models.train_baseline import load_config, train_baseline
-from src.models.lstm_benchmark_models.architectures import MODEL_REGISTRY as BENCHMARK_REGISTRY
-from src.models.improved_lstm_models.train import train_improved
-from src.models.hugging_face_mamba_moe.train_mamba import train_mamba, MODEL_REGISTRY as MAMBA_REGISTRY
+from src.component.models.lstm_benchmark_models.train_baseline import load_config, train_baseline
+from src.component.models.lstm_benchmark_models.architectures import MODEL_REGISTRY as BENCHMARK_REGISTRY
+from src.component.models.improved_lstm_models.train import train_improved
+from src.component.models.hugging_face_mamba_moe.train_mamba import train_mamba, MODEL_REGISTRY as MAMBA_REGISTRY
 
 logger = logging.getLogger(__name__)
 

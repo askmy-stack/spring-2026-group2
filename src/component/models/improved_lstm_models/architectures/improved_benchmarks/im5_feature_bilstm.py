@@ -4,10 +4,10 @@ M5 accepts both raw EEG ``(B, C, T)`` and pre-extracted features
 ``(B, seq_len, n_features)`` — IM5 inherits that dual path and just
 bumps the backbone defaults.
 """
-from src.models.lstm_benchmark_models.architectures.m5_feature_bilstm import (
+from src.component.models.lstm_benchmark_models.architectures.m5_feature_bilstm import (
     M5_FeatureBiLSTM,
 )
-from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
+from src.component.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM5_FeatureBiLSTM(M5_FeatureBiLSTM):

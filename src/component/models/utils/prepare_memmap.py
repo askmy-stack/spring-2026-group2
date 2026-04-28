@@ -22,8 +22,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.models.utils.config_utils import load_config
-from src.models.utils.io_utils import ensure_dir
+from src.component.models.utils.config_utils import load_config
+from src.component.models.utils.io_utils import ensure_dir
 
 DEFAULT_META_COLS = {
     "path", "start_sec", "end_sec", "label",

@@ -18,15 +18,15 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from src.models.utils.losses import FocalLoss
-from src.models.utils.metrics import (
+from src.component.models.utils.losses import FocalLoss
+from src.component.models.utils.metrics import (
     compute_f1_score, compute_auc_roc, compute_sensitivity,
     compute_specificity, find_optimal_threshold,
 )
-from src.models.utils.callbacks import EarlyStopping, clip_gradients
-from src.models.utils.config_validator import validate_config
-from src.models.utils.checkpoint import save_checkpoint
-from src.models.lstm_benchmark_models.train_baseline import (
+from src.component.models.utils.callbacks import EarlyStopping, clip_gradients
+from src.component.models.utils.config_validator import validate_config
+from src.component.models.utils.checkpoint import save_checkpoint
+from src.component.models.lstm_benchmark_models.train_baseline import (
     load_config, _get_device, _build_data_loaders,
 )
 from .augmentation import EEGAugmentation, augment_batch

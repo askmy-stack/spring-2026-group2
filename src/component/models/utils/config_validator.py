@@ -2,7 +2,7 @@
 Config validation — ensures config.yaml has all required keys before training.
 
 Usage:
-    from src.models.utils.config_validator import validate_config
+    from src.component.models.utils.config_validator import validate_config
     validate_config(config)  # raises KeyError with helpful message if anything is missing
 """
 import logging

@@ -287,7 +287,7 @@ def _load_members(
     ckpts: List[Path], device: torch.device,
 ) -> Tuple[List[nn.Module], List[float], List[float]]:
     """Rebuild each checkpoint's model; return (models, weights, thresholds)."""
-    from src.models.utils.checkpoint import load_checkpoint  # local to avoid cycles
+    from src.component.models.utils.checkpoint import load_checkpoint  # local to avoid cycles
     models, weights, thresholds = [], [], []
     for path in ckpts:
         try:

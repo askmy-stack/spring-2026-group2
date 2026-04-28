@@ -2,7 +2,7 @@
 Hugging Face model factory — creates any registered EEG model by name.
 
 Usage:
-    from src.models.hugging_face_mamba_moe.architectures.hf_factory import create_hf_model, list_hf_models
+    from src.component.models.hugging_face_mamba_moe.architectures.hf_factory import create_hf_model, list_hf_models
     model = create_hf_model("baseline_cnn_1d", in_channels=16, num_classes=2)
 """
 from __future__ import annotations

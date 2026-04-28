@@ -1,6 +1,6 @@
 """IM4: Improved CNN-LSTM — subclass of M4_CNNLSTM."""
-from src.models.lstm_benchmark_models.architectures.m4_cnn_lstm import M4_CNNLSTM
-from src.models.improved_lstm_models.modules.regularization import wrap_with_droppath
+from src.component.models.lstm_benchmark_models.architectures.m4_cnn_lstm import M4_CNNLSTM
+from src.component.models.improved_lstm_models.modules.regularization import wrap_with_droppath
 
 
 class IM4_CNNLSTM(M4_CNNLSTM):

@@ -33,10 +33,10 @@ from pytorch_tabnet.tab_model import TabNetClassifier
 from torch.utils.data import DataLoader, Dataset
 
 # ── shared utils ─────────────────────────────────────────────────────────────
-from src.models.utils.config_utils import load_config
-from src.models.utils.io_utils import ensure_dir, save_csv, save_json
-from src.models.utils.metric_utils import compute_binary_metrics, sweep_thresholds_for_f1
-from src.models.utils.plot_utils import (
+from src.component.models.utils.config_utils import load_config
+from src.component.models.utils.io_utils import ensure_dir, save_csv, save_json
+from src.component.models.utils.metric_utils import compute_binary_metrics, sweep_thresholds_for_f1
+from src.component.models.utils.plot_utils import (
     save_confusion_matrix_plot,
     save_pr_curve,
     save_roc_curve,
@@ -48,7 +48,7 @@ from src.models.utils.plot_utils import (
 
 def ensure_memmap(cfg: dict, chunksize: int = 50_000) -> None:
     """Build memmap files if they don't already exist."""
-    from src.models.utils.prepare_memmap import (
+    from src.component.models.utils.prepare_memmap import (
         build_label_mapping,
         detect_feature_columns,
         write_split,
