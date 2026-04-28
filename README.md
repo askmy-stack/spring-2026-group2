@@ -44,15 +44,19 @@ This project builds a complete, reproducible EEG seizure detection pipeline on t
 
 **The core research question:** Which neural architecture family best detects seizures under strict *subject-independent* evaluation — where training subjects never appear in the test set?
 
-We benchmark four architecture families end-to-end on the same data splits:
+We benchmark **eight architecture families** end-to-end on the same subject-independent data splits:
 
 | Family | Models | Status |
 |--------|--------|--------|
-| 🔁 LSTM Variants | Vanilla, BiLSTM, Attention-BiLSTM, CNN-LSTM | ✅ Baseline complete |
-| ⚡ Improved LSTM | im1–im7 with MixUp / SWA / TTA / K-fold | ✅ Code complete |
-| 🌀 State-Space (Mamba) | EEGMamba, EEGMamba-MoE | ✅ Code complete |
-| 🤗 HuggingFace / Transformer | ST-EEGFormer, BENDR, EEGPT, BIOT, EEGNet + 4 custom CNNs | ✅ Code complete |
-| 🎯 Meta-Ensemble | Mean / Weighted / Rank-Average / Logistic Stacking | ✅ Code complete |
+| 🔁 Legacy LSTM | Vanilla, BiLSTM, Attention-BiLSTM, CNN-LSTM | ✅ Trained |
+| 📊 LSTM Benchmarks | m1–m7 refactored architectures | ✅ Trained |
+| ⚡ Improved LSTM | im1–im7 + HierarchicalLSTM · MixUp · WarmupCosine | 🔄 In progress |
+| 🌀 State-Space (Mamba) | EEGMamba, EEGMambaMoE | 🔄 In progress |
+| 🧠 HF Custom CNNs | 6 CNN architectures (dilated, multi-scale, SE blocks) | ✅ Trained |
+| 🤗 HF Pretrained | ST-EEGFormer, BENDR, EEGPT, BIOT | 🔄 In progress |
+| 📈 Classical ML | LightGBM, XGBoost, RandomForest · Optuna-tuned on 528 features | 🔄 In progress |
+| 🔬 Experimental | VQ-Transformer (vector-quantized attention) | 🔄 In progress |
+| 🎯 Meta-Ensemble | Mean / Weighted / Rank-Average / Logistic Stacking | ⏳ Pending |
 
 ---
 
@@ -83,29 +87,52 @@ flowchart LR
 graph TD
     ROOT[🧠 EEG Seizure Detection Models]
 
-    ROOT --> LSTM[🔁 LSTM Family]
-    ROOT --> MAMBA[🌀 State-Space Family]
-    ROOT --> HF[🤗 HuggingFace Family]
+    ROOT --> LEGACY[🔁 Legacy LSTM]
+    ROOT --> BENCH[📊 LSTM Benchmarks]
+    ROOT --> IMPROVED[⚡ Improved LSTM]
+    ROOT --> MAMBA[🌀 State-Space]
+    ROOT --> CNN[🧠 HF Custom CNNs]
+    ROOT --> PRETRAINED[🤗 HF Pretrained]
+    ROOT --> CLASSICAL[📈 Classical ML]
+    ROOT --> EXPERIMENTAL[🔬 Experimental]
     ROOT --> ENS[🎯 Meta-Ensemble]
 
-    LSTM --> L1[m1: Vanilla LSTM]
-    LSTM --> L2[m2: BiLSTM]
-    LSTM --> L3[m3: CrissCross BiLSTM]
-    LSTM --> L4[m4: CNN-LSTM ⭐ best baseline]
-    LSTM --> L5[m5: Feature BiLSTM]
-    LSTM --> L6[m6: Graph BiLSTM]
-    LSTM --> L7[m7: Attention LSTM]
-    LSTM --> IM[im1–im7: Improved\nMixUp · SWA · TTA · K-fold]
+    LEGACY --> LG1[vanilla_lstm]
+    LEGACY --> LG2[bilstm]
+    LEGACY --> LG3[attention_bilstm]
+    LEGACY --> LG4[cnn_lstm]
+
+    BENCH --> B1[m1: Vanilla LSTM]
+    BENCH --> B2[m2: BiLSTM]
+    BENCH --> B3[m3: CrissCross BiLSTM]
+    BENCH --> B4[m4: CNN-LSTM]
+    BENCH --> B5[m5: Feature BiLSTM]
+    BENCH --> B6[m6: Graph BiLSTM]
+    BENCH --> B7[m7: Attention LSTM]
+
+    IMPROVED --> IM1[im1–im7\nMixUp · WarmupCosine · EEGAugmentation]
+    IMPROVED --> IM2[HierarchicalLSTM\nMulti-scale temporal]
 
     MAMBA --> MB1[EEGMamba\nSSM + selective scan]
-    MAMBA --> MB2[EEGMamba-MoE\nSSM + Mixture of Experts]
+    MAMBA --> MB2[EEGMambaMoE\nSSM + Mixture of Experts]
 
-    HF --> HF1[ST-EEGFormer\nViT-style pretrained 128Hz]
-    HF --> HF2[BENDR\nContrastive pretrained]
-    HF --> HF3[EEGPT\nGPT-style foundation]
-    HF --> HF4[BIOT\nBiologically-informed]
-    HF --> HF5[MultiScaleAttentionCNN\nParallel branches + SE]
-    HF --> HF6[EnhancedCNN1D\nDilated residual + SE]
+    CNN --> CN1[BaselineCNN1D]
+    CNN --> CN2[EnhancedCNN1D\nDilated residual + SE]
+    CNN --> CN3[MultiScaleCNN\n4-branch parallel]
+    CNN --> CN4[MultiScaleAttentionCNN\nMulti-scale + SE fusion]
+    CNN --> CN5[EEGNetLocal]
+    CNN --> CN6[DeepConvNet]
+
+    PRETRAINED --> PT1[ST-EEGFormer\nViT-style · 128 Hz]
+    PRETRAINED --> PT2[BENDR\nContrastive pretrained]
+    PRETRAINED --> PT3[EEGPT\nGPT-style foundation]
+    PRETRAINED --> PT4[BIOT\nBio-informed transformer]
+
+    CLASSICAL --> CL1[LightGBM\nOptuna-tuned]
+    CLASSICAL --> CL2[XGBoost\nOptuna-tuned]
+    CLASSICAL --> CL3[RandomForest\nOptuna-tuned]
+
+    EXPERIMENTAL --> EX1[VQ-Transformer\nVector Quantized]
 
     ENS --> E1[Mean averaging]
     ENS --> E2[Weighted averaging]
@@ -214,31 +241,36 @@ spring-2026-group2/
 
 | # | Family | Model Key | Architecture |
 |---|--------|-----------|-------------|
-| 1 | Legacy LSTM | `vanilla_lstm` | 2-layer LSTM | 
-| 2 | Legacy LSTM | `bilstm` | Bidirectional LSTM | 
-| 3 | Legacy LSTM | `attention_bilstm` | BiLSTM + Multi-head attention | 
-| 4 | Legacy LSTM | `cnn_lstm` | Multi-scale CNN + BiLSTM + Attention | 
-| 5 | Benchmark | `m1_vanilla_lstm` | Refactored vanilla LSTM | 
-| 6 | Benchmark | `m2_bilstm` | Refactored BiLSTM | 
-| 7 | Benchmark | `m3_criss_cross` | Criss-Cross BiLSTM |
-| 8 | Benchmark | `m4_cnn_lstm` | 3-branch CNN + BiLSTM + MHSA | 
-| 9 | Benchmark | `m5_feature_bilstm` | Feature-conditioned BiLSTM | 
-| 10 | Benchmark | `m6_graph_bilstm` | Graph-attention BiLSTM | 
-| 11 | Benchmark | `m7_attention_lstm` | Full self-attention LSTM | 
-| 12 | Improved | `im1`–`im7` | Above + MixUp · SWA · TTA · K-fold | 
-| 13 | Ensemble | 5-model avg | Improved benchmark ensemble | 
-| 14 | Mamba | `eeg_mamba` | State-space model (SSM) | 
-| 15 | Mamba | `eeg_mamba_moe` | SSM + Mixture of Experts | 
-| 16 | HF Custom | `baseline_cnn_1d` | 3-layer 1D CNN | 
-| 17 | HF Custom | `enhanced_cnn_1d` | Dilated residual + SE attention | 
-| 18 | HF Custom | `multiscale_cnn` | 4-branch multi-scale CNN |
-| 19 | HF Custom | `multiscale_attention_cnn` | Multi-scale + SE fusion | 
-| 20 | HF Custom | `eegnet_local` | Local EEGNet (no HF dependency) | 
-| 21 | HF Pretrained | `st_eegformer` | ViT transformer, 128 Hz, 16ch | 
-| 22 | HF Pretrained | `bendr_pretrained` | Contrastive pretrained encoder |
-| 23 | HF Pretrained | `eegpt_pretrained` | GPT-style EEG foundation model | 
-| 24 | HF Pretrained | `biot_pretrained` | Bio-informed transformer |
-| 25 | Meta-Ensemble | — | mean / weighted / rank / stacking | 
+| 1 | Legacy LSTM | `vanilla_lstm` | 2-layer stacked LSTM |
+| 2 | Legacy LSTM | `bilstm` | Bidirectional LSTM |
+| 3 | Legacy LSTM | `attention_bilstm` | BiLSTM + Multi-head attention |
+| 4 | Legacy LSTM | `cnn_lstm` | Multi-scale CNN + BiLSTM + Attention |
+| 5 | LSTM Benchmark | `m1_vanilla_lstm` | Refactored 2-layer LSTM |
+| 6 | LSTM Benchmark | `m2_bilstm` | Refactored BiLSTM |
+| 7 | LSTM Benchmark | `m3_criss_cross` | Criss-cross channel-attention BiLSTM |
+| 8 | LSTM Benchmark | `m4_cnn_lstm` | 3-branch parallel CNN (k=3/15/31) + BiLSTM + MHSA |
+| 9 | LSTM Benchmark | `m5_feature_bilstm` | Feature-conditioned BiLSTM |
+| 10 | LSTM Benchmark | `m6_graph_bilstm` | Graph-attention BiLSTM |
+| 11 | LSTM Benchmark | `m7_attention_lstm` | Full self-attention LSTM |
+| 12 | Improved LSTM | `im1`–`im7` | m1–m7 + MixUp · WarmupCosine · EEGAugmentation |
+| 13 | Improved LSTM | `hierarchical_lstm` | Multi-scale hierarchical temporal LSTM |
+| 14 | State-Space | `eeg_mamba` | Mamba SSM with selective scan |
+| 15 | State-Space | `eeg_mamba_moe` | Mamba SSM + Mixture of Experts routing |
+| 16 | HF Custom CNN | `baseline_cnn_1d` | 3-layer 1D CNN baseline |
+| 17 | HF Custom CNN | `enhanced_cnn_1d` | Dilated residual blocks + SE attention |
+| 18 | HF Custom CNN | `multiscale_cnn` | 4-branch multi-scale parallel CNN |
+| 19 | HF Custom CNN | `multiscale_attention_cnn` | Multi-scale branches + SE channel fusion |
+| 20 | HF Custom CNN | `eegnet_local` | Compact EEGNet (depthwise + separable conv) |
+| 21 | HF Custom CNN | `deep_conv_net` | DeepConvNet (temporal + spatial + classification) |
+| 22 | HF Pretrained | `st_eegformer` | ViT-style transformer, 128 Hz, 16ch |
+| 23 | HF Pretrained | `bendr_pretrained` | Contrastive self-supervised EEG encoder |
+| 24 | HF Pretrained | `eegpt_pretrained` | GPT-style EEG foundation model |
+| 25 | HF Pretrained | `biot_pretrained` | Biologically-informed transformer |
+| 26 | Classical ML | `lightgbm` | LightGBM on 528 features, Optuna-tuned |
+| 27 | Classical ML | `xgboost` | XGBoost on 528 features, Optuna-tuned |
+| 28 | Classical ML | `random_forest` | Random Forest on 528 features, Optuna-tuned |
+| 29 | Experimental | `vq_transformer` | Vector-Quantized Transformer (M7-VQT) |
+| 30 | Meta-Ensemble | — | mean / weighted / rank-average / logistic stacking | 
 
 ---
 
@@ -349,7 +381,7 @@ python src/component/models/run_all_models.py \
     --config src/component/models/config.yaml
 ```
 
-Runs Phase 1 (LSTM benchmarks) → Phase 2 (Improved LSTMs) → Phase 3 (Mamba) sequentially and saves all checkpoints + metrics.
+Runs all phases sequentially — LSTM benchmarks → Improved LSTMs → Mamba/MoE → HF CNNs — and saves all checkpoints + metrics to `results/`.
 
 ---
 
@@ -385,12 +417,52 @@ python -m src.component.models.lstm_benchmark_models.train_baseline --model m4_c
 
 ### Phase 1b — Improved LSTM Models (im1–im7)
 
-Adds MixUp augmentation, Stochastic Weight Averaging (SWA), Test-Time Augmentation (TTA), and K-fold cross-validation on top of every benchmark model.
+Adds MixUp-style augmentation, WarmupCosine LR scheduling, and EEGAugmentation (time shift, Gaussian noise, channel dropout, amplitude scaling, time masking) on top of every benchmark model.
 
 ```bash
 python -m src.component.models.improved_lstm_models.train \
     --data_path data/processed/chbmit \
     --config src/component/models/config.yaml
+```
+
+---
+
+### Phase 1c — Hierarchical LSTM
+
+Multi-scale temporal processing — encodes EEG at different time granularities before a final classification head.
+
+```bash
+python -m src.component.models.improved_lstm_models.train \
+    --model hierarchical_lstm \
+    --data_path data/processed/chbmit \
+    --config src/component/models/config.yaml
+```
+
+---
+
+### Classical ML — LightGBM / XGBoost / Random Forest (Optuna-tuned)
+
+Requires 528-feature tensors generated by the feature engineering pipeline. Optuna runs hyperparameter search automatically.
+
+```bash
+# Step 1: generate feature tensors
+python src/component/features/feature_engineering.py --config src/component/configs/fe.yaml
+
+# Step 2: run Optuna-tuned classifiers
+python src/component/models/improved/optuna_lightgbm.py
+python src/component/models/improved/optuna_xgboost.py
+python src/component/models/improved/optuna_random_forest.py
+```
+
+---
+
+### Experimental — VQ-Transformer Ensemble
+
+Loads 7 pre-trained checkpoints and evaluates a Vector-Quantized Transformer ensemble.
+
+```bash
+python -m src.component.models._experimental.ensemble_transformers.train_ensemble \
+    --checkpoint_dir results/checkpoints/
 ```
 
 ---
@@ -460,50 +532,23 @@ python src/component/features/feature_engineering.py --config src/component/conf
 
 ## 📈 Results
 
-### Baseline Results — Phase 0 Legacy LSTM
+Training results are saved automatically to `results/` after each run as JSON metric files and `.pt` checkpoints. Per-model summary JSONs pushed by the team live in `src/component/models/model_metrics/`.
 
-```
-  Model                 F1      AUC    Sensitivity   Train Time
-  ──────────────────────────────────────────────────────────────
-  Vanilla LSTM         0.346   0.563     0.314        56.7 min
-  ████████████░░░░░░░░░░░░░░░░░░
+### Training Status
 
-  BiLSTM               0.329   0.611     0.260       108.1 min
-  ████████████░░░░░░░░░░░░░░░░░░
+| Family | Models | Status |
+|--------|--------|--------|
+| 🔁 Legacy LSTM | vanilla_lstm, bilstm, attention_bilstm, cnn_lstm | ✅ Trained |
+| 📊 LSTM Benchmarks | m1–m7 | ✅ Trained |
+| ⚡ Improved LSTM | im1–im7, HierarchicalLSTM | 🔄 In progress |
+| 🌀 State-Space (Mamba) | eeg_mamba, eeg_mamba_moe | 🔄 In progress |
+| 🧠 HF Custom CNNs | enhanced_cnn_1d, multiscale_attention_cnn, + 4 more | ✅ Trained |
+| 🤗 HF Pretrained | ST-EEGFormer, BENDR, BIOT, EEGPT | 🔄 In progress |
+| 📈 Classical ML | LightGBM, XGBoost, RandomForest (Optuna) | 🔄 In progress |
+| 🔬 Experimental | VQ-Transformer | 🔄 In progress |
+| 🎯 Meta-Ensemble | mean / weighted / rank / stacking | ⏳ Pending all checkpoints |
 
-  Attention BiLSTM     0.348   0.641     0.273       125.0 min
-  ████████████░░░░░░░░░░░░░░░░░░
-
-  CNN-LSTM             0.518   0.712     0.569        35.7 min   ← best baseline
-  ████████████████████░░░░░░░░░░
-```
-
-| Model | F1 | AUC-ROC | Sensitivity | Specificity | Train Time |
-|-------|----|---------|-------------|-------------|-----------|
-| Vanilla LSTM | 0.346 | 0.563 | 0.314 | 0.787 | 56.7 min |
-| BiLSTM | 0.329 | 0.611 | 0.260 | 0.864 | 108.1 min |
-| Attention BiLSTM | 0.348 | 0.641 | 0.273 | 0.872 | 125.0 min |
-| **CNN-LSTM** | **0.518** | **0.712** | **0.569** | 0.730 | **35.7 min** |
-
-> **Key finding:** Multi-scale CNN feature extraction (kernels 3/15/31) before the LSTM gives the biggest single boost — F1 +50% and AUC +27% over vanilla LSTM, while being **3× faster** to train.
-
-### Phase 3 Results — CNN Models (Trained, 3 Epochs, Focal Loss γ=2)
-
-| Model | F1 | AUC-ROC | Precision | Recall | Accuracy | Threshold |
-|-------|----|---------|-----------|--------|----------|-----------|
-| **Enhanced CNN 1D** | **0.504** | **0.992** | 0.580 | 0.446 | 0.9991 | 0.55 |
-| Multiscale Attention CNN | 0.419 | 0.989 | 0.422 | 0.415 | 0.9988 | 0.85 |
-
-> **Key finding:** Enhanced CNN 1D achieves AUC-ROC of **0.992** — near-perfect discrimination — in just 3 epochs. High AUC with moderate F1 reflects class imbalance (~3% positives); threshold tuning and more epochs should push F1 significantly higher.
-
-### Expected After Full Pipeline
-
-| Stage | F1 Range | AUC Range | Sensitivity |
-|-------|----------|-----------|-------------|
-| Legacy LSTM baselines | 0.33–0.52 | 0.56–0.71 | 0.26–0.57 |
-| Improved LSTM (im1–im7) | 0.62–0.70 | 0.78–0.85 | 0.75–0.85 |
-| 5-model ensemble | 0.80–0.87 | 0.85–0.91 | 0.85–0.90 |
-| Meta-ensemble (all families) | **best** | **best** | **best** |
+> Metrics tracked per model: **F1**, **AUC-ROC**, **sensitivity**, **specificity**, **precision**, **recall**, and optimal decision threshold (tuned on validation set).
 
 ---
 
