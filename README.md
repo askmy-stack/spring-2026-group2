@@ -46,17 +46,17 @@ This project builds a complete, reproducible EEG seizure detection pipeline on t
 
 We benchmark **eight architecture families** end-to-end on the same subject-independent data splits:
 
-| Family | Models | Status |
-|--------|--------|--------|
-| 🔁 Legacy LSTM | Vanilla, BiLSTM, Attention-BiLSTM, CNN-LSTM | ✅ Trained |
-| 📊 LSTM Benchmarks | m1–m7 refactored architectures | ✅ Trained |
-| ⚡ Improved LSTM | im1–im7 + HierarchicalLSTM · MixUp · WarmupCosine | 🔄 In progress |
-| 🌀 State-Space (Mamba) | EEGMamba, EEGMambaMoE | 🔄 In progress |
-| 🧠 HF Custom CNNs | 6 CNN architectures (dilated, multi-scale, SE blocks) | ✅ Trained |
-| 🤗 HF Pretrained | ST-EEGFormer, BENDR, EEGPT, BIOT | 🔄 In progress |
-| 📈 Classical ML | LightGBM, XGBoost, RandomForest · Optuna-tuned on 528 features | 🔄 In progress |
-| 🔬 Experimental | VQ-Transformer (vector-quantized attention) | 🔄 In progress |
-| 🎯 Meta-Ensemble | Mean / Weighted / Rank-Average / Logistic Stacking | ⏳ Pending |
+| Family | Models |
+|--------|--------|
+| 🔁 Legacy LSTM | Vanilla, BiLSTM, Attention-BiLSTM, CNN-LSTM |
+| 📊 LSTM Benchmarks | m1–m7 refactored architectures |
+| ⚡ Improved LSTM | im1–im7 + HierarchicalLSTM · MixUp · WarmupCosine |
+| 🌀 State-Space (Mamba) | EEGMamba, EEGMambaMoE |
+| 🧠 HF Custom CNNs | 6 CNN architectures (dilated, multi-scale, SE blocks) |
+| 🤗 HF Pretrained | ST-EEGFormer, BENDR, EEGPT, BIOT |
+| 📈 Classical ML | LightGBM, XGBoost, RandomForest · Optuna-tuned on 528 features |
+| 🔬 Experimental | VQ-Transformer (vector-quantized attention) |
+| 🎯 Meta-Ensemble | Mean / Weighted / Rank-Average / Logistic Stacking |
 
 ---
 
@@ -527,28 +527,6 @@ python src/component/features/feature_engineering.py --config src/component/conf
 | FFT | 16 | dominant frequency per channel |
 | Wavelet (db4, level 4) | 80 | coefficient energy + entropy |
 | **Total** | **528** | per 1-second × 16-channel window |
-
----
-
-## 📈 Results
-
-Training results are saved automatically to `results/` after each run as JSON metric files and `.pt` checkpoints. Per-model summary JSONs pushed by the team live in `src/component/models/model_metrics/`.
-
-### Training Status
-
-| Family | Models | Status |
-|--------|--------|--------|
-| 🔁 Legacy LSTM | vanilla_lstm, bilstm, attention_bilstm, cnn_lstm | ✅ Trained |
-| 📊 LSTM Benchmarks | m1–m7 | ✅ Trained |
-| ⚡ Improved LSTM | im1–im7, HierarchicalLSTM | 🔄 In progress |
-| 🌀 State-Space (Mamba) | eeg_mamba, eeg_mamba_moe | 🔄 In progress |
-| 🧠 HF Custom CNNs | enhanced_cnn_1d, multiscale_attention_cnn, + 4 more | ✅ Trained |
-| 🤗 HF Pretrained | ST-EEGFormer, BENDR, BIOT, EEGPT | 🔄 In progress |
-| 📈 Classical ML | LightGBM, XGBoost, RandomForest (Optuna) | 🔄 In progress |
-| 🔬 Experimental | VQ-Transformer | 🔄 In progress |
-| 🎯 Meta-Ensemble | mean / weighted / rank / stacking | ⏳ Pending all checkpoints |
-
-> Metrics tracked per model: **F1**, **AUC-ROC**, **sensitivity**, **specificity**, **precision**, **recall**, and optimal decision threshold (tuned on validation set).
 
 ---
 
