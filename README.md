@@ -12,7 +12,7 @@
 
 <br>
 
-![EEG Brain Activity — multi-channel signals from scalp electrodes](demo/fig/eeg_banner.png)
+![EEG Brain Activity — multi-channel signals from scalp electrodes](demo/fig/eeg_banner.gif)
 
 *Multi-channel EEG signals (Fp1–O2) recorded via scalp electrodes — the raw neural data our models analyse for seizure detection*
 
