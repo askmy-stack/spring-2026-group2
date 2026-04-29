@@ -6,5 +6,5 @@ They are **no longer used by the current training pipeline** but are kept tempor
 
 ```bash
 # to remove later
-rm -rf src/models/legacy_baseline
+rm -rf src/component/models/legacy_baseline
 ```

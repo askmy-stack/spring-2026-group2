@@ -66,3 +66,4 @@ src/debug_session_log.txt
 
 # Wiki (managed separately)
 wiki/
+stress_test.py

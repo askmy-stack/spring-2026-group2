@@ -16,10 +16,10 @@ Typical EDA tasks include:
 
 - [eda_chbmit.py](./eda_chbmit.py)
 
-Run from `src`:
+Run from the **project root**:
 
 ```bash
-PYTHONPATH=. python3 EDA/eda_chbmit.py
+python -m src.component.EDA.eda_chbmit
 ```
 
 ## Expected Inputs

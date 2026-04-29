@@ -5,7 +5,7 @@ Canonical pipeline: **three training directories + one shared utilities package 
 ## Directory Layout
 
 ```
-src/models/
+src/component/models/
 ├── config.yaml                   # Single source of truth for hyperparameters
 ├── run_all_models.py             # Orchestrator: runs all three phases sequentially
 ├── README.md                     # This file
@@ -76,12 +76,12 @@ windows (16 channels × 256 timesteps), applies z-score normalisation, and
 splits 70/15/15 by subject:
 
 ```bash
-python src/prepare_tensors.py \
-    --raw_dir src/data/raw/chbmit \
-    --out_dir src/data/processed/chbmit
+python src/component/prepare_tensors.py \
+    --raw_dir data/raw/chbmit \
+    --out_dir data/processed/chbmit
 ```
 
-> Note: `src/data_loader/precache.py` is a **different** tool — it builds the
+> Note: `src/component/dataloaders/common/tensor_writer.py` is a **different** tool — it builds the
 > on-disk pickle cache consumed by `CachedEEGLoader`. The canonical training
 > scripts here read the `data.pt` / `labels.pt` layout produced by
 > `prepare_tensors.py`, not the pickle cache.
@@ -89,7 +89,7 @@ python src/prepare_tensors.py \
 Output layout:
 
 ```
-src/data/processed/chbmit/
+data/processed/chbmit/
 ├── train/  data.pt  labels.pt
 ├── val/    data.pt  labels.pt
 └── test/   data.pt  labels.pt
@@ -99,28 +99,28 @@ Tensors are `(N, 16, 256)` float32 at 256 Hz with 1-second windows; labels are `
 
 ### 2. Train Models
 
-All training scripts read `src/models/config.yaml` and write a **unified
+All training scripts read `src/component/models/config.yaml` and write a **unified
 checkpoint** (see below) to `outputs/models/` by default.
 
 ```bash
 # Phase 1 — benchmarks (m1–m6, or 'all')
-python -m src.models.lstm_benchmark_models.train_baseline \
-    --model m1_vanilla_lstm --data_path src/data/processed/chbmit
+python -m src.component.models.lstm_benchmark_models.train_baseline \
+    --model m1_vanilla_lstm --data_path data/processed/chbmit
 
 # Phase 2 — improved LSTM (HierarchicalLSTM + augmentation)
-python -m src.models.improved_lstm_models.train \
-    --data_path src/data/processed/chbmit
+python -m src.component.models.improved_lstm_models.train \
+    --data_path data/processed/chbmit
 
 # Phase 3a — Mamba / Mamba-MoE
-python -m src.models.hugging_face_mamba_moe.train_mamba \
-    --model eeg_mamba --data_path src/data/processed/chbmit
+python -m src.component.models.hugging_face_mamba_moe.train_mamba \
+    --model eeg_mamba --data_path data/processed/chbmit
 
 # Phase 3b — HuggingFace models (eegnet, deepconvnet, eegpt_pretrained, …)
-python -m src.models.hugging_face_mamba_moe.train_hf \
-    --model eegnet --data_path src/data/processed/chbmit
+python -m src.component.models.hugging_face_mamba_moe.train_hf \
+    --model eegnet --data_path data/processed/chbmit
 
 # Or run every phase at once
-python -m src.models.run_all_models --data_path src/data/processed/chbmit
+python -m src.component.models.run_all_models --data_path data/processed/chbmit
 ```
 
 ### 3. Ensemble
@@ -129,13 +129,13 @@ Once ≥ 2 checkpoints exist, ensemble them with the helper CLIs:
 
 ```bash
 # Ensemble all improved-LSTM .pt files in a directory
-python -m src.models.improved_lstm_models.ensemble \
-    --data_path src/data/processed/chbmit \
-    --ckpt_dir src/models/improved_lstm_models/checkpoints
+python -m src.component.models.improved_lstm_models.ensemble \
+    --data_path data/processed/chbmit \
+    --ckpt_dir results/checkpoints
 
 # Ensemble all HF-model checkpoints
-python -m src.models.hugging_face_mamba_moe.ensemble_hf \
-    --data_path src/data/processed/chbmit --strategy weighted
+python -m src.component.models.hugging_face_mamba_moe.ensemble_hf \
+    --data_path data/processed/chbmit --strategy weighted
 ```
 
 Both auto-discover `.pt` files, rebuild models via `load_checkpoint`, run per-member
@@ -147,8 +147,8 @@ threshold tuned on validation data.
 Verify that a checkpoint is loadable and runnable end-to-end on a raw EDF:
 
 ```bash
-python -m src.models.tools.infer_edf \
-    --edf src/data/raw/chbmit/chb01/chb01_01.edf \
+python -m src.component.models.tools.infer_edf \
+    --edf data/raw/chbmit/chb01/chb01_01.edf \
     --ckpt outputs/models/m1_vanilla_lstm_best.pt
 ```
 
@@ -158,7 +158,7 @@ so no external configuration is needed.
 ## Unified Checkpoint Schema
 
 Every canonical training script writes `.pt` files via
-`src.models.utils.checkpoint.save_checkpoint`. The on-disk payload is:
+`src.component.models.utils.checkpoint.save_checkpoint`. The on-disk payload is:
 
 | Key                     | Type        | Purpose                                                       |
 |-------------------------|-------------|---------------------------------------------------------------|
@@ -177,7 +177,7 @@ Every canonical training script writes `.pt` files via
 Load any checkpoint uniformly:
 
 ```python
-from src.models.utils.checkpoint import load_checkpoint
+from src.component.models.utils.checkpoint import load_checkpoint
 model, payload = load_checkpoint("outputs/models/m1_vanilla_lstm_best.pt")
 threshold = payload["optimal_threshold"]
 ```
@@ -192,11 +192,11 @@ Each `im_i` subclasses its `m_i` counterpart with wider defaults (`hidden_size 1
 
 ```bash
 # Train every improved benchmark
-python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+python -m src.component.models.improved_lstm_models.training.train_improved_benchmark \
     --model all --data_path $DATA
 
 # Fast smoke run (1 seed × 2 folds × 3 epochs)
-python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+python -m src.component.models.improved_lstm_models.training.train_improved_benchmark \
     --model im7_attention_lstm --data_path $DATA --dry_run
 ```
 
@@ -208,9 +208,9 @@ All unified-schema checkpoints (originals, improved, or the ensemble meta) can b
 pip install 'huggingface_hub[cli]' safetensors
 huggingface-cli login           # or export HF_TOKEN=hf_...
 
-python -m src.models.utils.hf_publish \
+python -m src.component.models.utils.hf_publish \
     --repo-id <your-user>/chbmit-seizure-models \
-    --ckpt-dirs src/models/improved_lstm_models/checkpoints \
+    --ckpt-dirs results/checkpoints \
     --include 'im*_best.pt' 'improved_lstm_best.pt' \
     --visibility public
 ```
@@ -218,7 +218,7 @@ python -m src.models.utils.hf_publish \
 Each model gets its own subfolder on the Hub containing `model.safetensors`, `config.json`, `metrics.json`, and an auto-generated `README.md` model card. To round-trip load any published model back into the project:
 
 ```python
-from src.models.utils.hf_publish import rehydrate_from_hub
+from src.component.models.utils.hf_publish import rehydrate_from_hub
 model, payload = rehydrate_from_hub(
     "<your-user>/chbmit-seizure-models",
     subfolder="im7_attention_lstm",
@@ -244,22 +244,22 @@ those arrays — no model reload, no GPU required.
 
 ```bash
 # 1. Build each family's ensemble (writes val/test probs.npy next to metrics)
-python -m src.models.improved_lstm_models.ensemble \
+python -m src.component.models.improved_lstm_models.ensemble \
     --data_path $DATA \
     --out_dir outputs/ensemble/lstm
 
-python -m src.models.hugging_face_mamba_moe.ensemble_mamba \
+python -m src.component.models.hugging_face_mamba_moe.ensemble_mamba \
     --data_path $DATA \
     --out_dir outputs/ensemble/mamba
 
-python -m src.models.hugging_face_mamba_moe.ensemble_hf \
+python -m src.component.models.hugging_face_mamba_moe.ensemble_hf \
     --data_path $DATA
 
 # 2. Combine families
-python -m src.models.meta_ensemble \
+python -m src.component.models.meta_ensemble \
     --family_dir outputs/ensemble/lstm \
     --family_dir outputs/ensemble/mamba \
-    --family_dir src/results/model/ensemble \
+    --family_dir results/ensemble \
     --strategy weighted \
     --out_dir outputs/ensemble/meta
 ```
@@ -277,25 +277,25 @@ models, and a full retrain once the new `config.yaml` bumps are in effect.
 ```bash
 # --- Pass 1: fix + retune (~3–4 h on one A100) ----------------------------
 # Mamba: threshold tuning on val + NaN guard + LR warmup.
-python -m src.models.hugging_face_mamba_moe.train_mamba \
+python -m src.component.models.hugging_face_mamba_moe.train_mamba \
     --model eeg_mamba     --data_path $DATA
-python -m src.models.hugging_face_mamba_moe.train_mamba \
+python -m src.component.models.hugging_face_mamba_moe.train_mamba \
     --model eeg_mamba_moe --data_path $DATA
 
 # Previously-skipped HF models (biot 200 Hz / st_eegformer 128 Hz / bendr 20 ch
 # are now handled via runtime resample or zero-pad in train_hf._load_data):
 for m in biot_pretrained st_eegformer hf_st_eegformer bendr_pretrained \
          multiscale_attention_cnn ; do
-  python -m src.models.hugging_face_mamba_moe.train_hf \
+  python -m src.component.models.hugging_face_mamba_moe.train_hf \
       --model "$m" --data_path $DATA --train_augment
 done
 
 # --- Pass 2: full retrain (~12–16 h overnight) ----------------------------
-python -m src.models.lstm_benchmark_models.train_baseline --model all --data_path $DATA
-python -m src.models.improved_lstm_models.train --data_path $DATA
-python -m src.models.improved_lstm_models.training.train_improved_benchmark \
+python -m src.component.models.lstm_benchmark_models.train_baseline --model all --data_path $DATA
+python -m src.component.models.improved_lstm_models.train --data_path $DATA
+python -m src.component.models.improved_lstm_models.training.train_improved_benchmark \
     --model all --data_path $DATA
-python -m src.models.hugging_face_mamba_moe.train_hf \
+python -m src.component.models.hugging_face_mamba_moe.train_hf \
     --model all --data_path $DATA --train_augment
 ```
 
@@ -303,7 +303,7 @@ After each pass, rebuild the family ensembles and rerun the meta ensemble.
 
 ## Configuration
 
-All hyperparameters live in `src/models/config.yaml`:
+All hyperparameters live in `src/component/models/config.yaml`:
 
 | Section         | Controls                                                                |
 |-----------------|-------------------------------------------------------------------------|
@@ -313,7 +313,7 @@ All hyperparameters live in `src/models/config.yaml`:
 | `models.*`      | Per-phase model hyperparameters; may override `training` keys           |
 | `outputs`       | `checkpoint_dir`, `results_dir`                                         |
 
-`src/data_loader/config.yaml` is intentionally separate (controls preprocessing
+`src/component/configs/fe.yaml` is intentionally separate (controls preprocessing
 and caching — not the model pipeline). The two are kept decoupled on purpose.
 
 ## What Was Deleted / Archived

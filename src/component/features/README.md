@@ -19,17 +19,17 @@ Run from the **project root**:
 
 ```bash
 # Train split
-python -m src.feature_engineering.run_features_from_index \
+python -m src.component.features.run_features_from_index \
     --config src/config/feature_engineering.yaml \
     --split train --n-jobs 4
 
 # Val split
-python -m src.feature_engineering.run_features_from_index \
+python -m src.component.features.run_features_from_index \
     --config src/config/feature_engineering.yaml \
     --split val --n-jobs 2
 
 # Test split
-python -m src.feature_engineering.run_features_from_index \
+python -m src.component.features.run_features_from_index \
     --config src/config/feature_engineering.yaml \
     --split test --n-jobs 2
 ```

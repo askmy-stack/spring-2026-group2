@@ -585,7 +585,7 @@ checkpoint = load_checkpoint("results/checkpoints/m4_cnn_lstm_best.pt")
 {
     "model_state_dict":       ...,       # weights
     "model_config":           {...},     # constructor kwargs to rebuild the model
-    "model_builder":          "src.models.hugging_face_mamba_moe.architectures.hf_factory.create_hf_model",
+    "model_builder":          "src.component.models.hugging_face_mamba_moe.architectures.hf_factory.create_hf_model",
     "input_spec":             {"channels": 16, "samples": 768, "sfreq": 128},
     "optimizer_state_dict":   ...,
     "epoch":                  48,
